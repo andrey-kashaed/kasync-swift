@@ -78,6 +78,10 @@ public extension Source where Output == Void {
         try await receive(consumerId: consumerId, spec: spec, instantOutput: ())
     }
     
+    func receive<SubInput>(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max)) async throws -> SubInput {
+        try await receive(consumerId: consumerId, instantOutput: ())
+    }
+    
     func receiver(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), spec: TSpec<Input> = TrueSpec()) -> AnyAsyncSequence<Input> {
         receiver(consumerId: consumerId, spec: spec, instantOutput: ())
     }
