@@ -543,12 +543,19 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
             var retainedSupplies: [Supply] = []
             while true {
                 guard let supply = dequeueSupply() else { break }
-                if !hasConsumerFor(supply: supply) {
-                    switch mode {
-                    case .cumulative:
+                switch mode {
+                case .cumulative:
+                    if !hasConsumerFor(supply: supply) {
                         retainedSupplies.append(supply)
                         continue
-                    case .retainable, .transient:
+                    }
+                case .retainable:
+                    if !hasConsumerFor(supply: supply) {
+                        discardProducer(producerId: supply.producerId)
+                        continue
+                    }
+                case .transient:
+                    if !hasNontransmittingConsumerFor(supply: supply) {
                         discardProducer(producerId: supply.producerId)
                         continue
                     }
@@ -575,12 +582,7 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
                     }
                 }
                 if !supplyIsConsumed {
-                    switch mode {
-                    case .transient:
-                        discardProducer(producerId: supply.producerId)
-                    default:
-                        retainedSupplies.append(supply)
-                    }
+                    retainedSupplies.append(supply)
                 }
             }
             for retainedSupply in retainedSupplies {
@@ -649,6 +651,16 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
                 return attachedConsumerIds.contains(where: { consumerId, inputSpec in consumerId == supply.producerId && inputSpec.isSatisfiedBy(supply.input) })
             } else {
                 return attachedConsumerIds.values.contains(where: { $0.isSatisfiedBy(supply.input) })
+            }
+        }
+    }
+    
+    private func hasNontransmittingConsumerFor(supply: Supply) -> Bool {
+        lock.synchronized {
+            if case .unicast = scheme {
+                return attachedConsumerIds.contains(where: { consumerId, inputSpec in consumerId == supply.producerId && inputSpec.isSatisfiedBy(supply.input) && !transmissions.contains { $0.consumerId == consumerId } })
+            } else {
+                return attachedConsumerIds.contains(where: { consumerId, inputSpec in inputSpec.isSatisfiedBy(supply.input) && !transmissions.contains { $0.consumerId == consumerId } })
             }
         }
     }
