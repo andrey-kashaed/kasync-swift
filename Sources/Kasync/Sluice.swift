@@ -38,7 +38,7 @@ public class Sluice {
             cancellation.onCancel = { [weak self] in
                 self?.removeEnterContinuation(enterId: enterId)?.resume(throwing: CancellationError())
             }
-            guard let self = self else { return }
+            guard let self else { return }
             self.addEnterContinuation(continuation, enterId: enterId)
             self.queuePass(Pass(enterId: enterId))
             self.dispatchPass()

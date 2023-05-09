@@ -414,7 +414,7 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
             cancellation.onCancel = { [weak self] in
                 self?.removeProduceContinuation(producerId: producerId)?.resume(throwing: CancellationError())
             }
-            guard let self = self else { return }
+            guard let self else { return }
             self.lock.synchronized {
                 self.addProduceContinuation(continuation, producerId: producerId)
                 self.queueSupply(Supply(producerId: producerId, input: input))
@@ -435,10 +435,10 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
             cancellation.onCancel = { [weak self] in
                 self?.removeConsumeContinuation(consumerId: consumerId)?.resume(throwing: CancellationError())
             }
-            guard let self = self else { return }
+            guard let self else { return }
             self.lock.synchronized {
-                if hasDiscardedConsumerId(consumerId) {
-                    removeDiscardedConsumerId(consumerId)
+                if self.hasDiscardedConsumerId(consumerId) {
+                    self.removeDiscardedConsumerId(consumerId)
                     continuation.resume(throwing: GateError.discardedOutput)
                     return
                 }

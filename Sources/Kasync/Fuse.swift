@@ -31,6 +31,7 @@ public class Fuse {
         self.tryLimit = tryLimit
     }
     
+    @discardableResult
     public func protected<T>(_ block: () async throws -> T) async rethrows -> T {
         var tryNumber = 0
         while true {
