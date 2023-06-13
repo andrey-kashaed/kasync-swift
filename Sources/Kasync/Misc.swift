@@ -294,3 +294,99 @@ public func iterateInfinitely<Element>(element: @autoclosure @escaping () -> Ele
 public func iterateInfinitely() -> AsyncStream<Void> {
     iterateInfinitely(element: ())
 }
+
+public extension AsyncSequence {
+    
+    func debounce(interval: Duration) -> AsyncThrowingStream<Element, Error> where Element: Sendable, AsyncIterator: Sendable {
+        let provider = DebounceProvider(debounceInterval: interval, iterator: self.makeAsyncIterator(), clock: .continuous)
+        return AsyncThrowingStream(unfolding: provider.next)
+    }
+    
+}
+
+fileprivate final class DebounceProvider<Element: Sendable> {
+    
+    private var terminated = false
+    private let gate: Gate<Result<Element?, Error>, Void>
+    private let tasks: [Task<Void, Never>]
+    
+    fileprivate init<I: AsyncIteratorProtocol & Sendable, C: Clock>(debounceInterval: C.Duration, iterator: I, clock: C) where I.Element == Element {
+        let gate = Gate<Result<Element?, Error>, Void>(mode: .cumulative(), scheme: .anycast)
+        self.gate = gate
+        @UncheckedReference var candidateTimestamp: C.Instant? = nil
+        @UncheckedReference var candidateElement: Element? = nil
+        let mutex = Mutex()
+        let semaphore = Semaphore(level: 0)
+        tasks = [
+            Task<Void, Never>.detached {
+                var iterator = iterator
+                while !Task.isCancelled {
+                    @UncheckedReference var element: Element? = nil
+                    do {
+                        try await $element =^ iterator.next()
+                        await mutex.atomic {
+                            if element == nil {
+                                try? await gate.send(.success(nil))
+                                gate.seal()
+                            } else {
+                                $candidateTimestamp =^ clock.now
+                                $candidateElement =^ element
+                            }
+                        }
+                    } catch {
+                        await mutex.atomic {
+                            try? await gate.send(.failure(error))
+                            gate.seal()
+                        }
+                    }
+                    semaphore.signal()
+                }
+            },
+            Task<Void, Never>.detached {
+                while !Task.isCancelled {
+                    @UncheckedReference var sleepInterval: C.Duration? = nil
+                    await mutex.atomic {
+                        guard let candidateInterval: C.Duration = letNotNil(candidateTimestamp, { $0.duration(to: clock.now) }) , let element: Element = candidateElement else {
+                            $sleepInterval =^ nil
+                            return
+                        }
+                        if candidateInterval >= debounceInterval {
+                            try? await gate.send(.success(element))
+                            $candidateTimestamp =^ nil
+                            $candidateElement =^ nil
+                        }
+                        $sleepInterval =^ max(C.Duration.zero, debounceInterval - candidateInterval)
+                    }
+                    if let sleepInterval {
+                        try? await clock.sleep(until: clock.now.advanced(by: sleepInterval), tolerance: nil)
+                    } else {
+                        try? await semaphore.await()
+                    }
+                }
+            }
+        ]
+    }
+    
+    func next() async throws -> Element? {
+        guard !terminated else { return nil }
+        switch try? await gate.receive() {
+        case .success(let element):
+            if element == nil {
+                terminate()
+            }
+            return element
+        case .failure(let error):
+            terminate()
+            throw error
+        case .none:
+            terminate()
+            return nil
+        }
+    }
+    
+    private func terminate() {
+        terminated = true
+        tasks.forEach({ $0.cancel() })
+    }
+    
+}
