@@ -43,7 +43,7 @@ public final class Semaphore: @unchecked Sendable {
     public func await(enabledAfterCancellation: Bool = false) async throws {
         if lock.withLock({ !enabled }) { return }
         try await withCancellableCheckedThrowingContinuation() { [weak self] (continuation: CheckedContinuation<Void, Error>, cancellation: Cancellation) -> Void in
-            cancellation.onCancel = {
+            cancellation.onCancel = { [weak self] in
                 self?.reset(enabled: enabledAfterCancellation)
             }
             self?.addContinuation(continuation)

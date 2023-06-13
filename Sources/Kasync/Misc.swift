@@ -43,14 +43,15 @@ public func withCancellableCheckedContinuation<T>(
 
 public struct Cancellation: Sendable {
     
-    @UncheckedReference private var internalOnCancel: (() -> Void) = {}
+    @UncheckedReference private var internalOnCancel: @Sendable () -> Void = {}
+    private let lock = NSLock()
     
-    public var onCancel: () -> Void {
+    public var onCancel: @Sendable () -> Void {
         get {
-            internalOnCancel
+            lock.withLock { internalOnCancel }
         }
         nonmutating set {
-            $internalOnCancel =^ newValue
+            lock.withLock { $internalOnCancel =^ newValue }
         }
     }
     
