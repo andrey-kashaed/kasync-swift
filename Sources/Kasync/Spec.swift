@@ -11,80 +11,111 @@
 // https://opensource.org/licenses/CDDL-1.0 or LICENSE.txt.
 //
 
-import Foundation
-
-public protocol Spec {
+public protocol Spec<T>: Sendable {
     associatedtype T
-    func isSatisfiedBy(_ obj: T) -> Bool
+    func isSatisfiedBy(_ instance: T) -> Bool
 }
 
 public extension Spec {
     
-    func and<S: Spec>(_ spec: S) -> TSpec<T> where S.T == T {
-        return AndSpec(self, spec)
+    func and(_ spec: any Spec<T>) -> any Spec<T> {
+        AndSpec(self, spec)
     }
     
-    func or<S: Spec>(_ spec: S) -> TSpec<T> where S.T == T {
-        return OrSpec(self, spec)
+    func or(_ spec: any Spec<T>) -> any Spec<T> {
+        OrSpec(self, spec)
     }
     
-    func not() -> TSpec<T> {
-        return NotSpec(self)
+    func not() -> any Spec<T> {
+        NotSpec(self)
     }
     
 }
 
-public class TSpec<T>: Spec {
+public func spec<T>(isSatisfiedBy: @Sendable @escaping (T) -> Bool) -> any Spec<T> {
+    TSpec(isSatisfiedBy: isSatisfiedBy)
+}
+
+public func falseSpec<T>() -> any Spec<T> {
+    FalseSpec()
+}
+
+public func trueSpec<T>() -> any Spec<T> {
+    TrueSpec()
+}
+
+fileprivate struct TSpec<T>: Spec {
     
-    private let isSatisfiedBy: (T) -> Bool
+    private let isSatisfiedBy: @Sendable (T) -> Bool
     
-    public init(isSatisfiedBy: @escaping (T) -> Bool) {
+    fileprivate init(isSatisfiedBy: @Sendable @escaping (T) -> Bool) {
         self.isSatisfiedBy = isSatisfiedBy
     }
     
-    
-    public func isSatisfiedBy(_ obj: T) -> Bool {
-        isSatisfiedBy(obj)
+    fileprivate func isSatisfiedBy(_ instance: T) -> Bool {
+        isSatisfiedBy(instance)
     }
     
 }
 
-private class AndSpec<T>: TSpec<T> {
+fileprivate struct AndSpec<T>: Spec {
     
-    public init<S1: Spec, S2: Spec>(_ spec1: S1, _ spec2: S2) where S1.T == T, S2.T == T {
-        super.init(isSatisfiedBy: { spec1.isSatisfiedBy($0) && spec2.isSatisfiedBy($0) })
+    private let isSatisfiedBy: @Sendable (T) -> Bool
+    
+    fileprivate init(_ spec1: any Spec<T>, _ spec2: any Spec<T>) {
+        isSatisfiedBy = { @Sendable in spec1.isSatisfiedBy($0) && spec2.isSatisfiedBy($0) }
+    }
+    
+    fileprivate func isSatisfiedBy(_ instance: T) -> Bool {
+        isSatisfiedBy(instance)
     }
     
 }
 
-private class OrSpec<T>: TSpec<T> {
+fileprivate struct OrSpec<T>: Spec {
     
-    public init<S1: Spec, S2: Spec>(_ spec1: S1, _ spec2: S2) where S1.T == T, S2.T == T {
-        super.init(isSatisfiedBy: { spec1.isSatisfiedBy($0) || spec2.isSatisfiedBy($0) })
+    private let isSatisfiedBy: @Sendable (T) -> Bool
+    
+    fileprivate init(_ spec1: any Spec<T>, _ spec2: any Spec<T>) {
+        isSatisfiedBy = { @Sendable in spec1.isSatisfiedBy($0) || spec2.isSatisfiedBy($0) }
+    }
+    
+    fileprivate func isSatisfiedBy(_ instance: T) -> Bool {
+        isSatisfiedBy(instance)
     }
     
 }
 
-private class NotSpec<T>: TSpec<T> {
+fileprivate struct NotSpec<T>: Spec {
     
-    public init<S: Spec>(_ spec: S) where S.T == T {
-        super.init(isSatisfiedBy: { !spec.isSatisfiedBy($0) })
+    private let isSatisfiedBy: @Sendable (T) -> Bool
+    
+    fileprivate init(_ spec: any Spec<T>) {
+        isSatisfiedBy = { @Sendable in !spec.isSatisfiedBy($0) }
+    }
+    
+    fileprivate func isSatisfiedBy(_ instance: T) -> Bool {
+        isSatisfiedBy(instance)
     }
     
 }
 
-public class FalseSpec<T>: TSpec<T> {
+fileprivate struct FalseSpec<T>: Spec {
     
-    public init() {
-        super.init(isSatisfiedBy: { _ in false })
+    fileprivate init() {}
+    
+    fileprivate func isSatisfiedBy(_ instance: T) -> Bool {
+        false
     }
     
 }
 
-public class TrueSpec<T>: TSpec<T> {
+fileprivate struct TrueSpec<T>: Spec {
     
-    public init() {
-        super.init(isSatisfiedBy: { _ in true })
+    fileprivate init() {}
+    
+    fileprivate func isSatisfiedBy(_ instance: T) -> Bool {
+        true
     }
     
 }

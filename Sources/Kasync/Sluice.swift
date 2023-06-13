@@ -13,7 +13,7 @@
 
 import Foundation
 
-public class Sluice {
+public final class Sluice: @unchecked Sendable {
     
     public struct Pass {
         let enterId: UInt64
@@ -23,61 +23,61 @@ public class Sluice {
         passingCapacity = capacity
     }
     
-    private var enterContinuations: [UInt64: CheckedContinuation<Void, Error>] = [:]
+    private var enterContinuations: [UInt64: CheckedContinuation<Void, Never>] = [:]
     private var passQueue: [Pass] = []
     private var passingCounter: Int = 0
     private let passingCapacity: Int
     private let lock = NSRecursiveLock()
     
-    public func enter() async throws {
+    @discardableResult
+    @inline(__always)
+    public func restricted<T>(_ operation: @Sendable () async throws -> T) async rethrows -> T {
+        await enter()
+        defer { exit() }
+        return try await operation()
+    }
+    
+    private func enter() async {
         let enterId = UInt64.random(in: UInt64.min...UInt64.max)
-        defer {
-            removeEnterContinuation(enterId: enterId)
-        }
-        try await withCancellableCheckedThrowingContinuation() { [weak self] (continuation: CheckedContinuation<Void, Error>, cancellation: Cancellation) -> Void in
-            cancellation.onCancel = { [weak self] in
-                self?.removeEnterContinuation(enterId: enterId)?.resume(throwing: CancellationError())
-            }
+        await withCheckedContinuation() { [weak self] (continuation: CheckedContinuation<Void, Never>) -> Void in
             guard let self else { return }
             self.addEnterContinuation(continuation, enterId: enterId)
             self.queuePass(Pass(enterId: enterId))
-            self.dispatchPass()
+            self.dispatchContinuations()
         }
-        try Task.checkCancellation()
     }
     
-    public func exit() {
+    private func exit() {
         decreasePassingCounter()
-        dispatchPass()
+        dispatchContinuations()
     }
     
-    private func addEnterContinuation(_ continuation: CheckedContinuation<Void, Error>, enterId: UInt64) {
-        lock.synchronized {
+    private func addEnterContinuation(_ continuation: CheckedContinuation<Void, Never>, enterId: UInt64) {
+        lock.withLock {
             enterContinuations[enterId] = continuation
         }
     }
     
-    @discardableResult
-    private func removeEnterContinuation(enterId: UInt64) -> CheckedContinuation<Void, Error>? {
-        lock.synchronized {
+    private func removeEnterContinuation(enterId: UInt64) -> CheckedContinuation<Void, Never>? {
+        lock.withLock {
             enterContinuations.removeValue(forKey: enterId)
         }
     }
     
     private func queuePass(_ pass: Pass) {
-        lock.synchronized {
+        lock.withLock {
             passQueue.append(pass)
         }
     }
     
     private func dequeuePass() -> Pass? {
-        lock.synchronized {
+        lock.withLock {
             passQueue.popFirst()
         }
     }
     
-    private func dispatchPass() {
-        lock.synchronized {
+    private func dispatchContinuations() {
+        lock.withLock {
             if passingCounter >= passingCapacity { return }
             guard let pass = dequeuePass() else { return }
             guard let enterContinuation = removeEnterContinuation(enterId: pass.enterId) else { return }
@@ -87,25 +87,15 @@ public class Sluice {
     }
     
     private func increasePassingCounter() {
-        lock.synchronized {
+        lock.withLock {
             passingCounter += 1
         }
     }
     
     private func decreasePassingCounter() {
-        lock.synchronized {
+        lock.withLock {
             passingCounter -= 1
         }
     }
     
-}
-
-public extension Sluice {
-    @discardableResult
-    @inline(__always)
-    func synchronized<T>(_ closure: () async throws -> T) async throws -> T {
-        try await enter()
-        defer { exit() }
-        return try await closure()
-    }
 }

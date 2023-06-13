@@ -11,70 +11,29 @@
 // https://opensource.org/licenses/CDDL-1.0 or LICENSE.txt.
 //
 
-import Foundation
-
-public func withCancellableCheckedThrowingContinuation<T>(
-    function: String = #function,
-    _ body: (CheckedContinuation<T, Error>, Cancellation) -> Void
-) async throws -> T {
-    let cancellationHolder = CancellationHolder()
-    return try await withTaskCancellationHandler {
-        return try await withCheckedThrowingContinuation(function: function) { (continuation: CheckedContinuation<T, Error>) -> Void in
-            body(continuation, Cancellation(holder: cancellationHolder))
-        }
-    } onCancel: {
-        cancellationHolder.onCancel()
-    }
+@discardableResult
+public func letNotNil<T1, T2>(_ instance: T1?, _ operation: (T1) throws -> T2?) rethrows -> T2? {
+    guard let instance = instance else { return nil }
+    return try operation(instance)
 }
 
-public func withCancellableCheckedContinuation<T>(
-    function: String = #function,
-    _ body: (CheckedContinuation<T, Never>, Cancellation) -> Void
-) async -> T {
-    let cancellationHolder = CancellationHolder()
-    return await withTaskCancellationHandler {
-        return await withCheckedContinuation(function: function) { (continuation: CheckedContinuation<T, Never>) -> Void in
-            body(continuation, Cancellation(holder: cancellationHolder))
-        }
-    } onCancel: {
-        cancellationHolder.onCancel()
-    }
+@discardableResult
+public func letNotNil<T1, T2>(_ instance: inout T1?, _ operation: (inout T1) throws -> T2?) rethrows -> T2? {
+    guard var instance = instance else { return nil }
+    return try operation(&instance)
 }
 
-public struct Cancellation {
-    
-    fileprivate let holder: CancellationHolder
-    
-    public var onCancel: () -> Void {
-        get {
-            holder.onCancel
-        }
-        nonmutating set {
-            holder.onCancel = newValue
-        }
-    }
-    
-}
-
-fileprivate class CancellationHolder {
-    var onCancel: (() -> Void) = {}
-}
-
-internal extension NSLocking {
-    @discardableResult
-    @inline(__always)
-    func synchronized<T>(_ closure: () throws -> T) rethrows -> T {
-        lock()
-        defer { unlock() }
-        return try closure()
-    }
+@discardableResult
+public func letNotNil<T1, T2>(_ instance: T1?, default: @autoclosure () -> T2, _ operation: (T1) throws -> T2) rethrows -> T2 {
+    guard let instance = instance else { return `default`() }
+    return try operation(instance)
 }
 
 internal extension Array where Element: Equatable {
     
     @discardableResult
-    mutating func remove(_ object: Element) -> Bool {
-        if let index = firstIndex(of: object) {
+    mutating func remove(_ element: Element) -> Bool {
+        if let index = firstIndex(of: element) {
             remove(at: index)
             return true
         }

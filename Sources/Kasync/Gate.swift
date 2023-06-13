@@ -13,7 +13,7 @@
 
 import Foundation
 
-public protocol Source {
+public protocol Source<Input, Output>: Sendable {
     
     associatedtype Input
     associatedtype Output
@@ -21,60 +21,60 @@ public protocol Source {
     var isSealed: Bool { get }
     
     @discardableResult
-    func process(consumerId: UInt64, spec: TSpec<Input>, operation: (Input) async throws -> Output) async throws -> Output
+    func process(consumerId: UInt64, spec: any Spec<Input>, operation: (Input) async throws -> Output) async throws -> Output
     
     @discardableResult
-    func receive(consumerId: UInt64, spec: TSpec<Input>, instantOutput: Output) async throws -> Input
+    func receive(consumerId: UInt64, spec: any Spec<Input>, instantOutput: Output) async throws -> Input
     
-    func processor(consumerId: UInt64, spec: TSpec<Input>, operation: @escaping (Input) async throws -> Output) -> AnyAsyncSequence<Output>
+    func processor(consumerId: UInt64, spec: any Spec<Input>, operation: @escaping (Input) async throws -> Output) -> AsyncThrowingStream<Output, Error>
     
-    func receiver(consumerId: UInt64, spec: TSpec<Input>, instantOutput: Output) -> AnyAsyncSequence<Input>
+    func receiver(consumerId: UInt64, spec: any Spec<Input>, instantOutput: Output) -> AsyncThrowingStream<Input, Error>
     
 }
 
 public extension Source {
     
     @discardableResult
-    func process(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), spec: TSpec<Input> = TrueSpec(), operation: (Input) async throws -> Output) async throws -> Output {
+    func process(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), spec: any Spec<Input> = trueSpec(), operation: (Input) async throws -> Output) async throws -> Output {
         try await process(consumerId: consumerId, spec: spec, operation: operation)
     }
     
     @discardableResult
     func process<SubInput>(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), operation: (SubInput) async throws -> Output) async throws -> Output {
-        try await process(consumerId: consumerId, spec: TSpec(isSatisfiedBy: { $0 is SubInput }), operation: { try await operation($0 as! SubInput) })
+        try await process(consumerId: consumerId, spec: spec(isSatisfiedBy: { $0 is SubInput }), operation: { try await operation($0 as! SubInput) })
     }
     
     @discardableResult
-    func receive(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), spec: TSpec<Input> = TrueSpec(), instantOutput: Output) async throws -> Input {
+    func receive(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), spec: any Spec<Input> = trueSpec(), instantOutput: Output) async throws -> Input {
         try await receive(consumerId: consumerId, spec: spec, instantOutput: instantOutput)
     }
     
     @discardableResult
     func receive<SubInput>(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), instantOutput: Output) async throws -> SubInput {
-        try await receive(consumerId: consumerId, spec: TSpec(isSatisfiedBy: { $0 is SubInput }), instantOutput: instantOutput) as! SubInput
+        try await receive(consumerId: consumerId, spec: spec(isSatisfiedBy: { $0 is SubInput }), instantOutput: instantOutput) as! SubInput
     }
     
-    func processor(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), spec: TSpec<Input> = TrueSpec(), operation: @escaping (Input) async throws -> Output) -> AnyAsyncSequence<Output> {
+    func processor(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), spec: any Spec<Input> = trueSpec(), operation: @escaping (Input) async throws -> Output) -> AsyncThrowingStream<Output, Error> {
         processor(consumerId: consumerId, spec: spec, operation: operation)
     }
     
-    func receiver(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), spec: TSpec<Input> = TrueSpec(), instantOutput: Output) -> AnyAsyncSequence<Input> {
+    func receiver(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), spec: any Spec<Input> = trueSpec(), instantOutput: Output) -> AsyncThrowingStream<Input, Error> {
         receiver(consumerId: consumerId, spec: spec, instantOutput: instantOutput)
     }
     
-    func processor<SubInput>(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), operation: @escaping (SubInput) async throws -> Output) -> AnyAsyncSequence<Output> {
-        processor(consumerId: consumerId, spec: TSpec(isSatisfiedBy: { $0 is SubInput }), operation: { try await operation($0 as! SubInput) })
+    func processor<SubInput>(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), operation: @escaping (SubInput) async throws -> Output) -> AsyncThrowingStream<Output, Error> {
+        processor(consumerId: consumerId, spec: spec(isSatisfiedBy: { $0 is SubInput }), operation: { try await operation($0 as! SubInput) })
     }
     
-    func receiver<SubInput>(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), instantOutput: Output) -> AnyAsyncSequence<SubInput> {
-        receiver(consumerId: consumerId, spec: TSpec(isSatisfiedBy: { $0 is SubInput }), instantOutput: instantOutput).map { $0 as! SubInput }.eraseToAnyAsyncSequence()
+    func receiver<SubInput>(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), instantOutput: Output) -> AsyncThrowingStream<SubInput, Error> {
+        receiver(consumerId: consumerId, spec: spec(isSatisfiedBy: { $0 is SubInput }), instantOutput: instantOutput).map { $0 as! SubInput }*!
     }
     
 }
 
 public extension Source where Output == Void {
     
-    func receive(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), spec: TSpec<Input> = TrueSpec()) async throws -> Input {
+    func receive(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), spec: any Spec<Input> = trueSpec()) async throws -> Input {
         try await receive(consumerId: consumerId, spec: spec, instantOutput: ())
     }
     
@@ -82,17 +82,17 @@ public extension Source where Output == Void {
         try await receive(consumerId: consumerId, instantOutput: ())
     }
     
-    func receiver(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), spec: TSpec<Input> = TrueSpec()) -> AnyAsyncSequence<Input> {
+    func receiver(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), spec: any Spec<Input> = trueSpec()) -> AsyncThrowingStream<Input, Error> {
         receiver(consumerId: consumerId, spec: spec, instantOutput: ())
     }
     
-    func receiver<SubInput>(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max)) -> AnyAsyncSequence<SubInput> {
+    func receiver<SubInput>(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max)) -> AsyncThrowingStream<SubInput, Error> {
         receiver(consumerId: consumerId, instantOutput: ())
     }
     
 }
 
-public final class AnySource<Input, Output>: Source {
+public final class СonfinedSource<Input, Output>: Source {
     
     private let gate: Gate<Input, Output>
     
@@ -104,25 +104,25 @@ public final class AnySource<Input, Output>: Source {
         gate.isSealed
     }
     
-    public func process(consumerId: UInt64, spec: TSpec<Input>, operation: (Input) async throws -> Output) async throws -> Output {
+    public func process(consumerId: UInt64, spec: any Spec<Input>, operation: (Input) async throws -> Output) async throws -> Output {
         try await gate.process(consumerId: consumerId, spec: spec, operation: operation)
     }
     
-    public func receive(consumerId: UInt64, spec: TSpec<Input>, instantOutput: Output) async throws -> Input {
+    public func receive(consumerId: UInt64, spec: any Spec<Input>, instantOutput: Output) async throws -> Input {
         try await gate.receive(consumerId: consumerId, spec: spec, instantOutput: instantOutput)
     }
     
-    public func processor(consumerId: UInt64, spec: TSpec<Input>, operation: @escaping (Input) async throws -> Output) -> AnyAsyncSequence<Output> {
+    public func processor(consumerId: UInt64, spec: any Spec<Input>, operation: @escaping (Input) async throws -> Output) -> AsyncThrowingStream<Output, Error> {
         gate.processor(consumerId: consumerId, spec: spec, operation: operation)
     }
     
-    public func receiver(consumerId: UInt64, spec: TSpec<Input>, instantOutput: Output) -> AnyAsyncSequence<Input> {
+    public func receiver(consumerId: UInt64, spec: any Spec<Input>, instantOutput: Output) -> AsyncThrowingStream<Input, Error> {
         gate.receiver(consumerId: consumerId, spec: spec, instantOutput: instantOutput)
     }
     
 }
 
-public protocol Drain {
+public protocol Drain<Input, Output>: Sendable {
     
     associatedtype Input
     associatedtype Output
@@ -131,7 +131,7 @@ public protocol Drain {
     
     func send(producerId: UInt64, _ provider: @escaping () async throws -> Input) async throws -> Output
     
-    func sender(producerId: UInt64, provider: AnyAsyncSequence<Input>) -> AnyAsyncSequence<Output>
+    func sender(producerId: UInt64, provider: AsyncThrowingStream<Input, Error>) -> AsyncThrowingStream<Output, Error>
     
 }
 
@@ -161,13 +161,13 @@ public extension Drain {
         }
     }
 
-    func sender(producerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), provider: AnyAsyncSequence<Input>) -> AnyAsyncSequence<Output> {
+    func sender(producerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), provider: AsyncThrowingStream<Input, Error>) -> AsyncThrowingStream<Output, Error> {
         sender(producerId: producerId, provider: provider)
     }
     
 }
 
-public final class AnyDrain<Input, Output>: Drain {
+public final class СonfinedDrain<Input, Output>: Drain {
     
     private let gate: Gate<Input, Output>
     
@@ -183,7 +183,7 @@ public final class AnyDrain<Input, Output>: Drain {
         try await gate.send(producerId: producerId, provider)
     }
     
-    public func sender(producerId: UInt64, provider: AnyAsyncSequence<Input>) -> AnyAsyncSequence<Output> {
+    public func sender(producerId: UInt64, provider: AsyncThrowingStream<Input, Error>) -> AsyncThrowingStream<Output, Error> {
         gate.sender(producerId: producerId, provider: provider)
     }
     
@@ -191,8 +191,10 @@ public final class AnyDrain<Input, Output>: Drain {
 
 public enum GateError: Error {
     case sealedGate
-    case discardedInput
-    case discardedOutput
+    case canceledProducer
+    case discardedProducer
+    case canceledConsumer
+    case discardedConsumer
 }
 
 extension GateError: LocalizedError {
@@ -200,15 +202,19 @@ extension GateError: LocalizedError {
         switch self {
         case .sealedGate:
             return "Gate is sealed"
-        case .discardedInput:
-            return "Input is discarded"
-        case .discardedOutput:
-            return "Output is discarded"
+        case .canceledProducer:
+            return "Producer is canceled"
+        case .discardedProducer:
+            return "Producer is discarded"
+        case .canceledConsumer:
+            return "Consumer is canceled"
+        case .discardedConsumer:
+            return "Consumer is discarded"
         }
     }
 }
 
-public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
+public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible, @unchecked Sendable {
     
     public enum Mode: Equatable {
         case cumulative(capacity: Int = Int.max)
@@ -235,7 +241,7 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     
     fileprivate struct Demand {
         let consumerId: UInt64
-        let inputSpec: TSpec<Input>
+        let inputSpec: any Spec<Input>
     }
     
     fileprivate struct Supply {
@@ -257,7 +263,7 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     private let scheme: Scheme
     private var produceContinuations: [UInt64: CheckedContinuation<Output, Error>] = [:]
     private var consumeContinuations: [UInt64: CheckedContinuation<Input, Error>] = [:]
-    private var attachedConsumerIds: [UInt64: TSpec<Input>] = [:]
+    private var attachedConsumerIds: [UInt64: any Spec<Input>] = [:]
     private var discardedConsumerIds: [UInt64] = []
     private var demandQueue: [Demand] = []
     private var supplyQueue: [Supply] = []
@@ -276,13 +282,13 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     }
     
     public var debugDescription: String {
-        lock.synchronized {
+        lock.withLock {
             "\(type(of: self)) demandQueue.count: \(demandQueue.count), supplyQueue.count: \(supplyQueue.count), produceContinuations.count: \(produceContinuations.count), consumeContinuations.count: \(consumeContinuations.count), replyCollection.count: \(replyCollection.count), transmissions.count: \(transmissions.count)"
         }
     }
     
     public func seal(_ error: Error) {
-        lock.synchronized {
+        lock.withLock {
             sealError = error
             demandQueue.removeAll()
             supplyQueue.removeAll()
@@ -300,24 +306,24 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     }
     
     public var isSealed: Bool {
-        lock.synchronized { sealError != nil }
+        lock.withLock { sealError != nil }
     }
     
     public func discardProducer(producerId: UInt64) {
-        lock.synchronized {
+        lock.withLock {
             let _ = dequeueSupply(producerId: producerId)
             guard let produceContinuation = removeProduceContinuation(producerId: producerId) else {
                 return
             }
-            produceContinuation.resume(throwing: GateError.discardedInput)
+            produceContinuation.resume(throwing: GateError.discardedProducer)
         }
     }
     
     public func discardConsumer(consumerId: UInt64) {
-        lock.synchronized {
+        lock.withLock {
             let _ = dequeueDemand(consumerId: consumerId)
             if let consumeContinuation = removeConsumeContinuation(consumerId: consumerId) {
-                consumeContinuation.resume(throwing: GateError.discardedOutput)
+                consumeContinuation.resume(throwing: GateError.discardedConsumer)
                 return
             }
             if hasConsumer(consumerId: consumerId) {
@@ -326,10 +332,10 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
         }
     }
     
-    public func sender(producerId: UInt64, provider: AnyAsyncSequence<Input>) -> AnyAsyncSequence<Output> {
-        let providerIterator = provider.makeAsyncIterator()
-        return AnyAsyncSequence(
-            next: { [weak self] in
+    public func sender(producerId: UInt64, provider: AsyncThrowingStream<Input, Error>) -> AsyncThrowingStream<Output, Error> {
+        var providerIterator = provider.makeAsyncIterator()
+        return AsyncThrowingStream(
+            unfolding: { [weak self] in
                 guard let input = try await providerIterator.next() else { return nil }
                 return try await self?.send(producerId: producerId, { input })
             }
@@ -341,46 +347,46 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
         return try await produce(input, producerId: producerId)
     }
     
-    public func processor(consumerId: UInt64, spec: TSpec<Input>, operation: @escaping (Input) async throws -> Output) -> AnyAsyncSequence<Output> {
+    public func processor(consumerId: UInt64, spec: any Spec<Input>, operation: @escaping (Input) async throws -> Output) -> AsyncThrowingStream<Output, Error> {
         attachConsumerId(consumerId, inputSpec: spec)
-        return AnyAsyncSequence(
-            next: { [weak self] in
+        return AsyncThrowingStream(
+            unfolding: { [weak self] in
                 try await self?.process(spec: spec, operation: operation, consumerId: consumerId)
             },
-            onClose: { [weak self] in
+            onTerminate: { [weak self] in
                 self?.detachConsumerId(consumerId)
             }
         )
     }
     
-    public func receiver(consumerId: UInt64, spec: TSpec<Input>, instantOutput: Output) -> AnyAsyncSequence<Input> {
-        self.attachConsumerId(consumerId, inputSpec: spec)
-        return AnyAsyncSequence(
-            next: { [weak self] in
+    public func receiver(consumerId: UInt64, spec: any Spec<Input>, instantOutput: Output) -> AsyncThrowingStream<Input, Error> {
+        attachConsumerId(consumerId, inputSpec: spec)
+        return AsyncThrowingStream(
+            unfolding: { [weak self] in
                 try await self?.receive(spec: spec, instantOutput: instantOutput, consumerId: consumerId)
             },
-            onClose: { [weak self] in
+            onTerminate: { [weak self] in
                 self?.detachConsumerId(consumerId)
             }
         )
     }
     
     @discardableResult
-    public func process(consumerId: UInt64, spec: TSpec<Input>, operation: (Input) async throws -> Output) async throws -> Output {
+    public func process(consumerId: UInt64, spec: any Spec<Input>, operation: (Input) async throws -> Output) async throws -> Output {
         attachConsumerId(consumerId, inputSpec: spec)
         defer { detachConsumerId(consumerId) }
         return try await process(spec: spec, operation: operation, consumerId: consumerId)
     }
     
     @discardableResult
-    public func receive(consumerId: UInt64, spec: TSpec<Input>, instantOutput: Output) async throws -> Input {
+    public func receive(consumerId: UInt64, spec: any Spec<Input>, instantOutput: Output) async throws -> Input {
         attachConsumerId(consumerId, inputSpec: spec)
         defer { detachConsumerId(consumerId) }
         return try await receive(spec: spec, instantOutput: instantOutput, consumerId: consumerId)
     }
     
     @discardableResult
-    private func process(spec: TSpec<Input>, operation: (Input) async throws -> Output, consumerId: UInt64) async throws -> Output {
+    private func process(spec: any Spec<Input>, operation: (Input) async throws -> Output, consumerId: UInt64) async throws -> Output {
         do {
             let input = try await consume(spec, consumerId: consumerId)
             let output = try await operation(input)
@@ -393,7 +399,7 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     }
     
     @discardableResult
-    private func receive(spec: TSpec<Input>, instantOutput: Output, consumerId: UInt64) async throws -> Input {
+    private func receive(spec: any Spec<Input>, instantOutput: Output, consumerId: UInt64) async throws -> Input {
         do {
             let input = try await consume(spec, consumerId: consumerId)
             respond(consumerId: consumerId, result: .success(instantOutput))
@@ -409,37 +415,34 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
         defer {
             removeProduceContinuation(producerId: producerId)
         }
-        try Task.checkCancellation()
         let output = try await withCancellableCheckedThrowingContinuation() { [weak self] (continuation: CheckedContinuation<Output, Error>, cancellation: Cancellation) -> Void in
             cancellation.onCancel = { [weak self] in
-                self?.removeProduceContinuation(producerId: producerId)?.resume(throwing: CancellationError())
+                self?.removeProduceContinuation(producerId: producerId)?.resume(throwing: GateError.canceledProducer)
             }
             guard let self else { return }
-            self.lock.synchronized {
+            self.lock.withLock {
                 self.addProduceContinuation(continuation, producerId: producerId)
                 self.queueSupply(Supply(producerId: producerId, input: input))
                 self.startTransmissionsIfRequired()
             }
         }
-        try Task.checkCancellation()
         return output
     }
     
-    private func consume(_ inputSpec: TSpec<Input>, consumerId: UInt64) async throws -> Input {
+    private func consume(_ inputSpec: any Spec<Input>, consumerId: UInt64) async throws -> Input {
         try checkSeal()
         defer {
             removeConsumeContinuation(consumerId: consumerId)
         }
-        try Task.checkCancellation()
         let input = try await withCancellableCheckedThrowingContinuation() { [weak self] (continuation: CheckedContinuation<Input, Error>, cancellation: Cancellation) -> Void in
             cancellation.onCancel = { [weak self] in
-                self?.removeConsumeContinuation(consumerId: consumerId)?.resume(throwing: CancellationError())
+                self?.removeConsumeContinuation(consumerId: consumerId)?.resume(throwing: GateError.canceledConsumer)
             }
             guard let self else { return }
-            self.lock.synchronized {
+            self.lock.withLock {
                 if self.hasDiscardedConsumerId(consumerId) {
                     self.removeDiscardedConsumerId(consumerId)
-                    continuation.resume(throwing: GateError.discardedOutput)
+                    continuation.resume(throwing: GateError.discardedConsumer)
                     return
                 }
                 self.addConsumeContinuation(continuation, consumerId: consumerId)
@@ -447,12 +450,11 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
                 self.startTransmissionsIfRequired()
             }
         }
-        try Task.checkCancellation()
         return input
     }
     
     private func respond(consumerId: UInt64, result: Result<Output, Error>) {
-        lock.synchronized {
+        lock.withLock {
             if transmissions.contains(where: { $0.consumerId == consumerId }) {
                 addReply(Reply(consumerId: consumerId, result: result))
             }
@@ -460,13 +462,13 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     }
     
     private func beginTransmission(producerId: UInt64, consumerId: UInt64) {
-        lock.synchronized {
+        lock.withLock {
             transmissions.append(Transmission(producerId: producerId, consumerId: consumerId))
         }
     }
     
     private func endTransactions(producerId: UInt64) -> [Transmission] {
-        lock.synchronized {
+        lock.withLock {
             let index = transmissions.partition(by: { $0.producerId == producerId })
             if index == transmissions.count { return [] }
             let endingTransmissions = transmissions[index...]
@@ -476,70 +478,70 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     }
     
     private func hasConsumeContinuation() -> Bool {
-        lock.synchronized {
+        lock.withLock {
             !consumeContinuations.isEmpty
         }
     }
     
     private func addConsumeContinuation(_ continuation: CheckedContinuation<Input, Error>, consumerId: UInt64) {
-        lock.synchronized {
+        lock.withLock {
             consumeContinuations[consumerId] = continuation
         }
     }
     
     @discardableResult
     private func removeConsumeContinuation(consumerId: UInt64) -> CheckedContinuation<Input, Error>? {
-        lock.synchronized {
+        lock.withLock {
             consumeContinuations.removeValue(forKey: consumerId)
         }
     }
     
-    private func attachConsumerId(_ consumerId: UInt64, inputSpec: TSpec<Input>) {
-        lock.synchronized {
+    private func attachConsumerId(_ consumerId: UInt64, inputSpec: any Spec<Input>) {
+        lock.withLock {
             attachedConsumerIds[consumerId] = inputSpec
         }
     }
     
     private func detachConsumerId(_ consumerId: UInt64) {
-        lock.synchronized {
+        lock.withLock {
             attachedConsumerIds.removeValue(forKey: consumerId)
             removeDiscardedConsumerId(consumerId)
         }
     }
     
     private func hasDiscardedConsumerId(_ consumerId: UInt64) -> Bool {
-        lock.synchronized {
+        lock.withLock {
             discardedConsumerIds.contains(consumerId)
         }
     }
     
     private func addDiscardedConsumerId(_ consumerId: UInt64) {
-        lock.synchronized {
+        lock.withLock {
             discardedConsumerIds.append(consumerId)
         }
     }
     
     private func removeDiscardedConsumerId(_ consumerId: UInt64) {
-        lock.synchronized {
-            discardedConsumerIds.remove(consumerId)
+        lock.withLock {
+            let _ = discardedConsumerIds.remove(consumerId)
         }
     }
     
     private func addProduceContinuation(_ continuation: CheckedContinuation<Output, Error>, producerId: UInt64) {
-        lock.synchronized {
+        lock.withLock {
             produceContinuations[producerId] = continuation
         }
     }
     
     @discardableResult
     private func removeProduceContinuation(producerId: UInt64) -> CheckedContinuation<Output, Error>? {
-        lock.synchronized {
+        lock.withLock {
             produceContinuations.removeValue(forKey: producerId)
         }
     }
     
     private func startTransmissionsIfRequired() {
-        lock.synchronized {
+        lock.withLock {
             var retainedSupplies: [Supply] = []
             while true {
                 guard let supply = dequeueSupply() else { break }
@@ -592,7 +594,7 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     }
     
     private func finishTransmissionsIfRequired() {
-        lock.synchronized {
+        lock.withLock {
             for producerId in produceContinuations.keys {
                 if allRepliesAreReady(producerId: producerId) {
                     if let produceContinuation = removeProduceContinuation(producerId: producerId) {
@@ -630,7 +632,7 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     }
     
     private func allRepliesAreReady(producerId: UInt64) -> Bool {
-        lock.synchronized {
+        lock.withLock {
             let producerTransmissions = transmissions.filter({ $0.producerId == producerId })
             if producerTransmissions.isEmpty { return false }
             return producerTransmissions.allSatisfy({ transmission in
@@ -640,13 +642,13 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     }
     
     private func hasConsumer(consumerId: UInt64) -> Bool {
-        lock.synchronized {
+        lock.withLock {
             attachedConsumerIds.contains(where: { attachedConsumerId, _ in attachedConsumerId == consumerId })
         }
     }
     
     private func hasConsumerFor(supply: Supply) -> Bool {
-        lock.synchronized {
+        lock.withLock {
             if case .unicast = scheme {
                 return attachedConsumerIds.contains(where: { consumerId, inputSpec in consumerId == supply.producerId && inputSpec.isSatisfiedBy(supply.input) })
             } else {
@@ -656,7 +658,7 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     }
     
     private func hasNontransmittingConsumerFor(supply: Supply) -> Bool {
-        lock.synchronized {
+        lock.withLock {
             if case .unicast = scheme {
                 return attachedConsumerIds.contains(where: { consumerId, inputSpec in consumerId == supply.producerId && inputSpec.isSatisfiedBy(supply.input) && !transmissions.contains { $0.consumerId == consumerId } })
             } else {
@@ -666,7 +668,7 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     }
     
     private func allConsumersAreReadyFor(input: Input) -> Bool {
-        lock.synchronized {
+        lock.withLock {
             attachedConsumerIds.filter({ _, spec in spec.isSatisfiedBy(input) }).keys.allSatisfy({ attachedConsumerId in
                 demandQueue.contains(where: { $0.consumerId == attachedConsumerId && $0.inputSpec.isSatisfiedBy(input) })
             })
@@ -674,19 +676,19 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     }
     
     private func queueDemand(_ demand: Demand) {
-        lock.synchronized {
+        lock.withLock {
             demandQueue.append(demand)
         }
     }
     
     private func dequeueDemand(consumerId: UInt64) -> Demand? {
-        lock.synchronized {
+        lock.withLock {
             demandQueue.removeFirst(where: { $0.consumerId == consumerId })
         }
     }
     
     private func dequeueDemand(supply: Supply) -> Demand? {
-        lock.synchronized {
+        lock.withLock {
             if case .unicast = scheme {
                 return demandQueue.removeFirst(where: { $0.consumerId == supply.producerId && $0.inputSpec.isSatisfiedBy(supply.input) })
             } else {
@@ -696,7 +698,7 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     }
     
     private func queueSupply(_ supply: Supply) {
-        lock.synchronized {
+        lock.withLock {
             while supplyQueue.count >= mode.capacity {
                 if let supply = supplyQueue.popFirst() {
                     discardProducer(producerId: supply.producerId)
@@ -707,32 +709,32 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     }
     
     private func dequeueSupply(producerId: UInt64) -> Supply? {
-        lock.synchronized {
+        lock.withLock {
             supplyQueue.removeFirst(where: { $0.producerId == producerId })
         }
     }
     
-    private func dequeueSupply(spec: TSpec<Input>) -> Supply? {
-        lock.synchronized {
+    private func dequeueSupply(spec: any Spec<Input>) -> Supply? {
+        lock.withLock {
             supplyQueue.removeFirst(where: { spec.isSatisfiedBy($0.input) })
         }
     }
     
     private func dequeueSupply() -> Supply? {
-        lock.synchronized {
+        lock.withLock {
             supplyQueue.popFirst()
         }
     }
     
     private func addReply(_ reply: Reply) {
-        lock.synchronized {
+        lock.withLock {
             replyCollection.append(reply)
             finishTransmissionsIfRequired()
         }
     }
     
     private func collectReplies(consumerIds: [UInt64]) -> [Reply] {
-        lock.synchronized {
+        lock.withLock {
             let index = replyCollection.partition(by: { consumerIds.contains($0.consumerId) })
             if index == replyCollection.count { return [] }
             let collectingReplies = replyCollection[index...]
@@ -742,7 +744,7 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
     }
     
     private func checkSeal() throws {
-        try lock.synchronized {
+        try lock.withLock {
             if let sealError = sealError {
                 throw sealError
             }
@@ -753,12 +755,12 @@ public class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible {
 
 public extension Gate {
     
-    var asSource: AnySource<Input, Output> {
-        AnySource(gate: self)
+    var toSource: any Source<Input, Output> {
+        СonfinedSource(gate: self)
     }
     
-    var asDrain: AnyDrain<Input, Output> {
-        AnyDrain(gate: self)
+    var toDrain: any Drain<Input, Output> {
+        СonfinedDrain(gate: self)
     }
     
 }

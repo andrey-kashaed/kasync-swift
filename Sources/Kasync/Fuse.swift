@@ -13,7 +13,7 @@
 
 import Foundation
 
-public class Fuse {
+public final class Fuse: @unchecked Sendable {
     
     public enum Backoff {
         case linear
@@ -22,40 +22,40 @@ public class Fuse {
     }
     
     private let backoff: Backoff
-    private let factor: Double
+    private let timeoutFactor: Duration
     private let tryLimit: Int
     
-    public init(backoff: Backoff, factor: Double, tryLimit: Int) {
+    public init(backoff: Backoff, timeoutFactor: Duration, tryLimit: Int) {
         self.backoff = backoff
-        self.factor = factor
+        self.timeoutFactor = timeoutFactor
         self.tryLimit = tryLimit
     }
     
     @discardableResult
-    public func protected<T>(_ block: () async throws -> T) async rethrows -> T {
+    public func protected<T>(_ operation: () async throws -> T) async rethrows -> T {
         var tryNumber = 0
         while true {
             do {
                 tryNumber += 1
-                return try await block()
+                return try await operation()
             } catch {
                 if error is CancellationError || tryNumber >= tryLimit {
                     throw error
                 }
                 let timeout = timeout(tryNumber: tryNumber)
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1000_000_000))
+                try await Task.sleep(for: timeout)
             }
         }
     }
     
-    private func timeout(tryNumber: Int) -> Double {
+    private func timeout(tryNumber: Int) -> Duration {
         switch backoff {
         case .linear:
-            return factor
+            return timeoutFactor
         case .fibonacci:
-            return factor * fibonacci(n: tryNumber)
+            return timeoutFactor * fibonacci(n: tryNumber)
         case .exponential:
-            return factor * exponential(n: tryNumber)
+            return timeoutFactor * exponential(n: tryNumber)
         }
     }
    

@@ -13,71 +13,76 @@
 
 import Foundation
 
-public class Barrier {
-    
-    public enum Mode {
-        case auto, manual
+public enum BarrierError: Error {
+    case resetBarrier
+    case finalizedBarrier
+}
+
+extension BarrierError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .resetBarrier:
+            return "Barrier is reset"
+        case .finalizedBarrier:
+            return "Barrier is finalized"
+        }
     }
+}
+
+public final class Barrier: @unchecked Sendable {
     
-    private let partiesCount: Int
-    private let mode: Mode
-    private var countdown: Int = 0
+    private let count: Int
+    private var enabled: Bool
+    private var countdown: Int
     private var continuations: [CheckedContinuation<Void, Error>] = []
-    private var enabled = true
     private let lock = NSRecursiveLock()
     
-    public init(partiesCount: Int = Int.max, mode: Mode = .auto) {
-        self.partiesCount = partiesCount
-        self.mode = mode
+    public init(count: Int, enabled: Bool = true) {
+        self.count = count
+        self.enabled = enabled
+        self.countdown = count
     }
     
-    public func await() async throws {
-        if lock.synchronized({ !enabled }) { return }
+    public func await(enabledAfterCancellation: Bool = false) async throws {
+        if lock.withLock({ !enabled }) { return }
         try await withCancellableCheckedThrowingContinuation() { [weak self] (continuation: CheckedContinuation<Void, Error>, cancellation: Cancellation) -> Void in
             cancellation.onCancel = {
-                self?.reset()
+                self?.reset(enabled: enabledAfterCancellation)
             }
             self?.addContinuation(continuation)
-            self?.dispatchCountdown()
+            self?.dispatchContinuations()
         }
     }
     
-    public func signal() {
-        lock.synchronized {
-            countdown = partiesCount
-            dispatchCountdown()
-        }
-    }
-    
-    public func reset(error: Error = CancellationError()) {
-        lock.synchronized {
+    public func reset(enabled: Bool, error: Error = BarrierError.resetBarrier) {
+        lock.withLock {
+            self.enabled = enabled
+            countdown = count
             for continuation in continuations {
                 continuation.resume(throwing: error)
             }
             continuations.removeAll()
-            countdown = 0
-            enabled = true
         }
     }
     
     private func addContinuation(_ continuation: CheckedContinuation<Void, Error>) {
-        lock.synchronized {
+        lock.withLock {
+            guard countdown > 0 else {
+                continuation.resume(throwing: BarrierError.finalizedBarrier)
+                return
+            }
             continuations.append(continuation)
-            countdown += 1
+            countdown -= 1
         }
     }
     
-    private func dispatchCountdown() {
-        lock.synchronized {
-            if countdown < partiesCount { return }
+    private func dispatchContinuations() {
+        lock.withLock {
+            if countdown > 0 { return }
             for continuation in continuations {
                 continuation.resume()
             }
             continuations.removeAll()
-            countdown = 0
-            if mode == .manual {
-                enabled = false
-            }
         }
     }
     
