@@ -14,12 +14,15 @@
 import Foundation
 
 public enum SemaphoreError: Error {
+    case disabledSemaphore
     case resetSemaphore
 }
 
 extension SemaphoreError: LocalizedError {
     public var errorDescription: String? {
         switch self {
+        case .disabledSemaphore:
+            return "Semaphore is disabled"
         case .resetSemaphore:
             return "Semaphore is reset"
         }
@@ -28,61 +31,83 @@ extension SemaphoreError: LocalizedError {
 
 public final class Semaphore: @unchecked Sendable {
     
-    private let level: Int
+    public let initialPermits: Int
     private var enabled: Bool
-    private var counter: Int
+    private var permits: Int
     private var continuations: [CheckedContinuation<Void, Error>] = []
     private let lock = NSRecursiveLock()
     
-    public init(level: Int, enabled: Bool = true) {
-        self.level = level
+    public init(initialPermits: Int, enabled: Bool = true) {
+        self.initialPermits = initialPermits
         self.enabled = enabled
-        self.counter = level
+        self.permits = initialPermits
+    }
+    
+    public var availablePermits: Int {
+        lock.withLock { permits }
+    }
+    
+    public var awaitingParties: Int {
+        lock.withLock { continuations.count }
+    }
+    
+    public var isEnabled: Bool {
+        lock.withLock { enabled }
+    }
+    
+    public func withTransaction(_ transaction: (Semaphore) -> Void) {
+        lock.withLock { transaction(self) }
     }
     
     public func await(enabledAfterCancellation: Bool = false) async throws {
-        if lock.withLock({ !enabled }) { return }
         try await withCancellableCheckedThrowingContinuation() { [weak self] (continuation: CheckedContinuation<Void, Error>, cancellation: Cancellation) -> Void in
-            cancellation.onCancel = { [weak self] in
-                self?.reset(enabled: enabledAfterCancellation)
+            self?.withTransaction { semaphore in
+                if !semaphore.enabled { continuation.resume(throwing: SemaphoreError.disabledSemaphore) }
+                semaphore.enqueueContinuationUnsafe(continuation)
+                semaphore.resolveContinuationsUnsafe()
+                cancellation.onCancel = { [weak semaphore] in
+                    semaphore?.reset(enabled: enabledAfterCancellation)
+                }
             }
-            self?.addContinuation(continuation)
-            self?.dispatchContinuations()
         }
     }
     
-    public func signal() {
-        lock.withLock {
-            if !enabled { return }
-            counter += 1
-            dispatchContinuations()
+    public func signal() throws {
+        try lock.withLock {
+            if !enabled { throw SemaphoreError.disabledSemaphore }
+            permits += 1
+            resolveContinuationsUnsafe()
+        }
+    }
+    
+    public func signal(permits: Int) throws {
+        try lock.withLock {
+            if !enabled { throw SemaphoreError.disabledSemaphore }
+            self.permits += permits
+            resolveContinuationsUnsafe()
         }
     }
     
     public func reset(enabled: Bool, error: Error = SemaphoreError.resetSemaphore) {
         lock.withLock {
             self.enabled = enabled
+            permits = initialPermits
             for continuation in continuations {
                 continuation.resume(throwing: error)
             }
             continuations.removeAll()
-            counter = level
         }
     }
     
-    private func addContinuation(_ continuation: CheckedContinuation<Void, Error>) {
-        lock.withLock {
-            continuations.append(continuation)
-        }
+    private func enqueueContinuationUnsafe(_ continuation: CheckedContinuation<Void, Error>) {
+        continuations.append(continuation)
     }
     
-    private func dispatchContinuations() {
-        lock.withLock {
-            while continuations.count > 0 && counter > 0 {
-                let continuation = continuations.removeFirst()
-                continuation.resume()
-                counter -= 1
-            }
+    private func resolveContinuationsUnsafe() {
+        while continuations.count > 0 && permits > 0 {
+            let continuation = continuations.removeFirst()
+            continuation.resume()
+            permits -= 1
         }
     }
     

@@ -15,19 +15,26 @@ import Foundation
 
 public final class Sluice: @unchecked Sendable {
     
-    public struct Pass {
-        let enterId: UInt64
-    }
-    
-    public init(capacity: Int = 1) {
-        passingCapacity = capacity
-    }
-    
-    private var enterContinuations: [UInt64: CheckedContinuation<Void, Never>] = [:]
-    private var passQueue: [Pass] = []
-    private var passingCounter: Int = 0
-    private let passingCapacity: Int
+    private let passCapacity: Int
+    private var passCounter: Int = 0
+    private var continuations: [CheckedContinuation<Void, Never>] = []
     private let lock = NSRecursiveLock()
+    
+    public init(passCapacity: Int) {
+        self.passCapacity = passCapacity
+    }
+    
+    public var awaitingParties: Int {
+        lock.withLock { continuations.count }
+    }
+    
+    public var passingParties: Int {
+        lock.withLock { passCounter }
+    }
+    
+    public func withTransaction(_ transaction: (Sluice) -> Void) {
+        lock.withLock { transaction(self) }
+    }
     
     @discardableResult
     @inline(__always)
@@ -38,63 +45,30 @@ public final class Sluice: @unchecked Sendable {
     }
     
     private func enter() async {
-        let enterId = UInt64.random(in: UInt64.min...UInt64.max)
         await withCheckedContinuation() { [weak self] (continuation: CheckedContinuation<Void, Never>) -> Void in
-            guard let self else { return }
-            self.addEnterContinuation(continuation, enterId: enterId)
-            self.queuePass(Pass(enterId: enterId))
-            self.dispatchContinuations()
+            self?.withTransaction { sluice in
+                sluice.enqueueContinuationUnsafe(continuation)
+                sluice.resolveContinuationsUnsafe()
+            }
         }
     }
     
     private func exit() {
-        decreasePassingCounter()
-        dispatchContinuations()
-    }
-    
-    private func addEnterContinuation(_ continuation: CheckedContinuation<Void, Never>, enterId: UInt64) {
         lock.withLock {
-            enterContinuations[enterId] = continuation
+            passCounter -= 1
+            resolveContinuationsUnsafe()
         }
     }
     
-    private func removeEnterContinuation(enterId: UInt64) -> CheckedContinuation<Void, Never>? {
-        lock.withLock {
-            enterContinuations.removeValue(forKey: enterId)
-        }
+    private func enqueueContinuationUnsafe(_ continuation: CheckedContinuation<Void, Never>) {
+        continuations.append(continuation)
     }
     
-    private func queuePass(_ pass: Pass) {
-        lock.withLock {
-            passQueue.append(pass)
-        }
-    }
-    
-    private func dequeuePass() -> Pass? {
-        lock.withLock {
-            passQueue.popFirst()
-        }
-    }
-    
-    private func dispatchContinuations() {
-        lock.withLock {
-            if passingCounter >= passingCapacity { return }
-            guard let pass = dequeuePass() else { return }
-            guard let enterContinuation = removeEnterContinuation(enterId: pass.enterId) else { return }
-            increasePassingCounter()
-            enterContinuation.resume()
-        }
-    }
-    
-    private func increasePassingCounter() {
-        lock.withLock {
-            passingCounter += 1
-        }
-    }
-    
-    private func decreasePassingCounter() {
-        lock.withLock {
-            passingCounter -= 1
+    private func resolveContinuationsUnsafe() {
+        while continuations.count > 0 && passCounter < passCapacity {
+            let continuation = continuations.removeFirst()
+            continuation.resume()
+            passCounter += 1
         }
     }
     

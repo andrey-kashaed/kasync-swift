@@ -13,18 +13,18 @@
 
 public actor Mutex {
     
-    private lazy var sluice: Sluice = { Sluice(capacity: 1) }()
-    private var sluiceEntryCounter = 0
+    private lazy var sluice: Sluice = { Sluice(passCapacity: 1) }()
+    private var sluicePartyCounter = 0
     
     public init() {}
 
     @discardableResult
     public func atomic<R: Sendable>(_ operation: @Sendable () throws -> R) async rethrows -> R {
-        guard sluiceEntryCounter > 0 else {
+        guard sluicePartyCounter > 0 else {
             return try operation()
         }
-        increaseSluiceEntryCounter()
-        defer { decreaseSluiceEntryCounter() }
+        sluicePartyCounter += 1
+        defer { sluicePartyCounter -= 1 }
         return try await sluice.restricted {
             try operation()
         }
@@ -32,19 +32,11 @@ public actor Mutex {
     
     @discardableResult
     public func atomic<R: Sendable>(_ operation: @Sendable () async throws -> R) async rethrows -> R {
-        increaseSluiceEntryCounter()
-        defer { decreaseSluiceEntryCounter() }
+        sluicePartyCounter += 1
+        defer { sluicePartyCounter -= 1 }
         return try await sluice.restricted {
             try await operation()
         }
-    }
-    
-    private func increaseSluiceEntryCounter() {
-        sluiceEntryCounter += 1
-    }
-    
-    private func decreaseSluiceEntryCounter() {
-        sluiceEntryCounter -= 1
     }
 
 }

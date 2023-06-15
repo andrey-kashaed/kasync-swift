@@ -43,15 +43,25 @@ public func withCancellableCheckedContinuation<T>(
 
 public struct Cancellation: Sendable {
     
-    @UncheckedReference private var internalOnCancel: @Sendable () -> Void = {}
-    private let lock = NSLock()
+    @UncheckedReference private var internalOnCancel: @Sendable () -> Void
+    @UncheckedReference private var canceled: Bool
+    private let lock: NSLock
+    
+    init() {
+        let lock = NSLock()
+        let canceled = UncheckedReference(wrappedValue: false)
+        let internalOnCancel = UncheckedReference(wrappedValue: { @Sendable in lock.withLock { canceled =^ true } })
+        _internalOnCancel = internalOnCancel
+        _canceled = canceled
+        self.lock = lock
+    }
     
     public var onCancel: @Sendable () -> Void {
         get {
             lock.withLock { internalOnCancel }
         }
         nonmutating set {
-            lock.withLock { $internalOnCancel =^ newValue }
+            if lock.withLock({ $internalOnCancel =^ newValue; return canceled }) { internalOnCancel() }
         }
     }
     
@@ -317,7 +327,7 @@ fileprivate final class DebounceProvider<Element: Sendable> {
         @UncheckedReference var candidateTimestamp: C.Instant? = nil
         @UncheckedReference var candidateElement: Element? = nil
         let mutex = Mutex()
-        let semaphore = Semaphore(level: 0)
+        let semaphore = Semaphore(initialPermits: 0)
         tasks = [
             Task<Void, Never>.detached {
                 var iterator = iterator
@@ -340,7 +350,7 @@ fileprivate final class DebounceProvider<Element: Sendable> {
                             gate.seal()
                         }
                     }
-                    semaphore.signal()
+                    try? semaphore.signal()
                 }
             },
             Task<Void, Never>.detached {
@@ -373,19 +383,19 @@ fileprivate final class DebounceProvider<Element: Sendable> {
         switch try? await gate.receive() {
         case .success(let element):
             if element == nil {
-                terminate()
+                terminateUnsafe()
             }
             return element
         case .failure(let error):
-            terminate()
+            terminateUnsafe()
             throw error
         case .none:
-            terminate()
+            terminateUnsafe()
             return nil
         }
     }
     
-    private func terminate() {
+    private func terminateUnsafe() {
         terminated = true
         tasks.forEach({ $0.cancel() })
     }

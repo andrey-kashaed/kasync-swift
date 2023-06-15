@@ -14,50 +14,61 @@
 import Foundation
 
 public enum BarrierError: Error {
+    case disabledBarrier
     case resetBarrier
-    case finalizedBarrier
 }
 
 extension BarrierError: LocalizedError {
     public var errorDescription: String? {
         switch self {
+        case .disabledBarrier:
+            return "Barrier is disabled"
         case .resetBarrier:
             return "Barrier is reset"
-        case .finalizedBarrier:
-            return "Barrier is finalized"
         }
     }
 }
 
 public final class Barrier: @unchecked Sendable {
     
-    private let count: Int
+    public let requiredParties: Int
     private var enabled: Bool
-    private var countdown: Int
     private var continuations: [CheckedContinuation<Void, Error>] = []
     private let lock = NSRecursiveLock()
     
-    public init(count: Int, enabled: Bool = true) {
-        self.count = count
+    public init(requiredParties: Int, enabled: Bool = true) {
+        self.requiredParties = requiredParties
         self.enabled = enabled
-        self.countdown = count
+    }
+    
+    public var awaitingParties: Int {
+        lock.withLock { continuations.count }
+    }
+    
+    public var isEnabled: Bool {
+        lock.withLock { enabled }
+    }
+    
+    public func withTransaction(_ transaction: (Barrier) -> Void) {
+        lock.withLock { transaction(self) }
     }
     
     public func await(enabledAfterCancellation: Bool = false) async throws {
-        if lock.withLock({ !enabled }) { return }
         try await withCancellableCheckedThrowingContinuation() { [weak self] (continuation: CheckedContinuation<Void, Error>, cancellation: Cancellation) -> Void in
-            cancellation.onCancel = { [weak self] in
-                self?.reset(enabled: enabledAfterCancellation)
+            self?.withTransaction { barrier in
+                if !barrier.enabled { continuation.resume(throwing: BarrierError.disabledBarrier) }
+                barrier.enqueueContinuationUnsafe(continuation)
+                barrier.resolveContinuationsUnsafe()
+                cancellation.onCancel = { [weak barrier] in
+                    barrier?.reset(enabled: enabledAfterCancellation)
+                }
             }
-            self?.addContinuation(continuation)
-            self?.dispatchContinuations()
         }
     }
     
     public func reset(enabled: Bool, error: Error = BarrierError.resetBarrier) {
         lock.withLock {
             self.enabled = enabled
-            countdown = count
             for continuation in continuations {
                 continuation.resume(throwing: error)
             }
@@ -65,25 +76,16 @@ public final class Barrier: @unchecked Sendable {
         }
     }
     
-    private func addContinuation(_ continuation: CheckedContinuation<Void, Error>) {
-        lock.withLock {
-            guard countdown > 0 else {
-                continuation.resume(throwing: BarrierError.finalizedBarrier)
-                return
-            }
-            continuations.append(continuation)
-            countdown -= 1
-        }
+    private func enqueueContinuationUnsafe(_ continuation: CheckedContinuation<Void, Error>) {
+        continuations.append(continuation)
     }
     
-    private func dispatchContinuations() {
-        lock.withLock {
-            if countdown > 0 { return }
-            for continuation in continuations {
-                continuation.resume()
-            }
-            continuations.removeAll()
+    private func resolveContinuationsUnsafe() {
+        if continuations.count < requiredParties { return }
+        for continuation in continuations {
+            continuation.resume()
         }
+        continuations.removeAll()
     }
     
 }

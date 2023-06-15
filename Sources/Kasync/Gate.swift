@@ -261,8 +261,8 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
     
     private let mode: Mode
     private let scheme: Scheme
-    private var produceContinuations: [UInt64: CheckedContinuation<Output, Error>] = [:]
-    private var consumeContinuations: [UInt64: CheckedContinuation<Input, Error>] = [:]
+    private var producerContinuations: [UInt64: CheckedContinuation<Output, Error>] = [:]
+    private var consumerContinuations: [UInt64: CheckedContinuation<Input, Error>] = [:]
     private var attachedConsumerIds: [UInt64: any Spec<Input>] = [:]
     private var discardedConsumerIds: [UInt64] = []
     private var demandQueue: [Demand] = []
@@ -283,7 +283,7 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
     
     public var debugDescription: String {
         lock.withLock {
-            "\(type(of: self)) demandQueue.count: \(demandQueue.count), supplyQueue.count: \(supplyQueue.count), produceContinuations.count: \(produceContinuations.count), consumeContinuations.count: \(consumeContinuations.count), replyCollection.count: \(replyCollection.count), transmissions.count: \(transmissions.count)"
+            "\(type(of: self)) demandQueue.count: \(demandQueue.count), supplyQueue.count: \(supplyQueue.count), producerContinuations.count: \(producerContinuations.count), consumerContinuations.count: \(consumerContinuations.count), replyCollection.count: \(replyCollection.count), transmissions.count: \(transmissions.count)"
         }
     }
     
@@ -293,14 +293,14 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
             demandQueue.removeAll()
             supplyQueue.removeAll()
             replyCollection.removeAll()
-            consumeContinuations.values.forEach { receiveContinuation in
-                receiveContinuation.resume(throwing: error)
+            consumerContinuations.values.forEach { consumerContinuation in
+                consumerContinuation.resume(throwing: error)
             }
-            consumeContinuations.removeAll()
-            produceContinuations.values.forEach { sendContinuation in
-                sendContinuation.resume(throwing: error)
+            consumerContinuations.removeAll()
+            producerContinuations.values.forEach { producerContinuation in
+                producerContinuation.resume(throwing: error)
             }
-            produceContinuations.removeAll()
+            producerContinuations.removeAll()
             transmissions.removeAll()
         }
     }
@@ -312,18 +312,18 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
     public func discardProducer(producerId: UInt64) {
         lock.withLock {
             let _ = dequeueSupply(producerId: producerId)
-            guard let produceContinuation = removeProduceContinuation(producerId: producerId) else {
+            guard let producerContinuation = removeProducerContinuation(producerId: producerId) else {
                 return
             }
-            produceContinuation.resume(throwing: GateError.discardedProducer)
+            producerContinuation.resume(throwing: GateError.discardedProducer)
         }
     }
     
     public func discardConsumer(consumerId: UInt64) {
         lock.withLock {
             let _ = dequeueDemand(consumerId: consumerId)
-            if let consumeContinuation = removeConsumeContinuation(consumerId: consumerId) {
-                consumeContinuation.resume(throwing: GateError.discardedConsumer)
+            if let consumerContinuation = removeConsumerContinuation(consumerId: consumerId) {
+                consumerContinuation.resume(throwing: GateError.discardedConsumer)
                 return
             }
             if hasConsumer(consumerId: consumerId) {
@@ -412,18 +412,14 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
     
     private func produce(_ input: Input, producerId: UInt64) async throws -> Output {
         try checkSeal()
-        defer {
-            removeProduceContinuation(producerId: producerId)
-        }
         let output = try await withCancellableCheckedThrowingContinuation() { [weak self] (continuation: CheckedContinuation<Output, Error>, cancellation: Cancellation) -> Void in
-            cancellation.onCancel = { [weak self] in
-                self?.removeProduceContinuation(producerId: producerId)?.resume(throwing: GateError.canceledProducer)
-            }
-            guard let self else { return }
-            self.lock.withLock {
-                self.addProduceContinuation(continuation, producerId: producerId)
-                self.queueSupply(Supply(producerId: producerId, input: input))
-                self.startTransmissionsIfRequired()
+            self?.withTransaction { gate in
+                gate.addProducerContinuation(continuation, producerId: producerId)
+                gate.enqueueSupply(Supply(producerId: producerId, input: input))
+                gate.startTransmissionsIfRequired()
+                cancellation.onCancel = { [weak gate] in
+                    gate?.removeProducerContinuation(producerId: producerId)?.resume(throwing: GateError.canceledProducer)
+                }
             }
         }
         return output
@@ -431,23 +427,19 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
     
     private func consume(_ inputSpec: any Spec<Input>, consumerId: UInt64) async throws -> Input {
         try checkSeal()
-        defer {
-            removeConsumeContinuation(consumerId: consumerId)
-        }
         let input = try await withCancellableCheckedThrowingContinuation() { [weak self] (continuation: CheckedContinuation<Input, Error>, cancellation: Cancellation) -> Void in
-            cancellation.onCancel = { [weak self] in
-                self?.removeConsumeContinuation(consumerId: consumerId)?.resume(throwing: GateError.canceledConsumer)
-            }
-            guard let self else { return }
-            self.lock.withLock {
-                if self.hasDiscardedConsumerId(consumerId) {
-                    self.removeDiscardedConsumerId(consumerId)
+            self?.withTransaction { gate in
+                if gate.hasDiscardedConsumerId(consumerId) {
+                    gate.removeDiscardedConsumerId(consumerId)
                     continuation.resume(throwing: GateError.discardedConsumer)
                     return
                 }
-                self.addConsumeContinuation(continuation, consumerId: consumerId)
-                self.queueDemand(Demand(consumerId: consumerId, inputSpec: inputSpec))
-                self.startTransmissionsIfRequired()
+                gate.addConsumerContinuation(continuation, consumerId: consumerId)
+                gate.enqueueDemand(Demand(consumerId: consumerId, inputSpec: inputSpec))
+                gate.startTransmissionsIfRequired()
+                cancellation.onCancel = { [weak self] in
+                    self?.removeConsumerContinuation(consumerId: consumerId)?.resume(throwing: GateError.canceledConsumer)
+                }
             }
         }
         return input
@@ -477,22 +469,22 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
         }
     }
     
-    private func hasConsumeContinuation() -> Bool {
+    private func hasConsumerContinuation() -> Bool {
         lock.withLock {
-            !consumeContinuations.isEmpty
+            !consumerContinuations.isEmpty
         }
     }
     
-    private func addConsumeContinuation(_ continuation: CheckedContinuation<Input, Error>, consumerId: UInt64) {
+    private func addConsumerContinuation(_ continuation: CheckedContinuation<Input, Error>, consumerId: UInt64) {
         lock.withLock {
-            consumeContinuations[consumerId] = continuation
+            consumerContinuations[consumerId] = continuation
         }
     }
     
     @discardableResult
-    private func removeConsumeContinuation(consumerId: UInt64) -> CheckedContinuation<Input, Error>? {
+    private func removeConsumerContinuation(consumerId: UInt64) -> CheckedContinuation<Input, Error>? {
         lock.withLock {
-            consumeContinuations.removeValue(forKey: consumerId)
+            consumerContinuations.removeValue(forKey: consumerId)
         }
     }
     
@@ -527,16 +519,16 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
         }
     }
     
-    private func addProduceContinuation(_ continuation: CheckedContinuation<Output, Error>, producerId: UInt64) {
+    private func addProducerContinuation(_ continuation: CheckedContinuation<Output, Error>, producerId: UInt64) {
         lock.withLock {
-            produceContinuations[producerId] = continuation
+            producerContinuations[producerId] = continuation
         }
     }
     
     @discardableResult
-    private func removeProduceContinuation(producerId: UInt64) -> CheckedContinuation<Output, Error>? {
+    private func removeProducerContinuation(producerId: UInt64) -> CheckedContinuation<Output, Error>? {
         lock.withLock {
-            produceContinuations.removeValue(forKey: producerId)
+            producerContinuations.removeValue(forKey: producerId)
         }
     }
     
@@ -571,8 +563,8 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
                     guard let demand = dequeueDemand(supply: supply) else {
                         break
                     }
-                    if let consumeContinuation = removeConsumeContinuation(consumerId: demand.consumerId) {
-                        consumeContinuation.resume(returning: supply.input)
+                    if let consumerContinuation = removeConsumerContinuation(consumerId: demand.consumerId) {
+                        consumerContinuation.resume(returning: supply.input)
                         beginTransmission(producerId: supply.producerId, consumerId: demand.consumerId)
                         supplyIsConsumed = true
                         switch scheme {
@@ -588,16 +580,16 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
                 }
             }
             for retainedSupply in retainedSupplies {
-                queueSupply(retainedSupply)
+                enqueueSupply(retainedSupply)
             }
         }
     }
     
     private func finishTransmissionsIfRequired() {
         lock.withLock {
-            for producerId in produceContinuations.keys {
+            for producerId in producerContinuations.keys {
                 if allRepliesAreReady(producerId: producerId) {
-                    if let produceContinuation = removeProduceContinuation(producerId: producerId) {
+                    if let producerContinuation = removeProducerContinuation(producerId: producerId) {
                         let consumerIds = endTransactions(producerId: producerId).map({ $0.consumerId })
                         let collectedReplies = collectReplies(consumerIds: consumerIds)
                         var outputs: [Output] = []
@@ -612,17 +604,17 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
                             }
                         }
                         if let firstError = firstError {
-                            produceContinuation.resume(throwing: firstError)
+                            producerContinuation.resume(throwing: firstError)
                         } else {
                             switch scheme {
                             case .unicast:
-                                produceContinuation.resume(returning: outputs.first!)
+                                producerContinuation.resume(returning: outputs.first!)
                             case .broadcast(let combiner):
-                                produceContinuation.resume(returning: combiner?(outputs) ?? outputs.last!)
+                                producerContinuation.resume(returning: combiner?(outputs) ?? outputs.last!)
                             case .multicast(let combiner):
-                                produceContinuation.resume(returning: combiner?(outputs) ?? outputs.last!)
+                                producerContinuation.resume(returning: combiner?(outputs) ?? outputs.last!)
                             case .anycast:
-                                produceContinuation.resume(returning: outputs.first!)
+                                producerContinuation.resume(returning: outputs.first!)
                             }
                         }
                     }
@@ -675,7 +667,7 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
         }
     }
     
-    private func queueDemand(_ demand: Demand) {
+    private func enqueueDemand(_ demand: Demand) {
         lock.withLock {
             demandQueue.append(demand)
         }
@@ -697,7 +689,7 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
         }
     }
     
-    private func queueSupply(_ supply: Supply) {
+    private func enqueueSupply(_ supply: Supply) {
         lock.withLock {
             while supplyQueue.count >= mode.capacity {
                 if let supply = supplyQueue.popFirst() {
@@ -749,6 +741,10 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
                 throw sealError
             }
         }
+    }
+    
+    private func withTransaction(_ transaction: (Gate<Input, Output>) -> Void) {
+        lock.withLock { transaction(self) }
     }
     
 }
