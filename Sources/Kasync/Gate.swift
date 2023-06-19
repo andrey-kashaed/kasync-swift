@@ -92,7 +92,7 @@ public extension Source where Output == Void {
     
 }
 
-public final class СonfinedSource<Input, Output>: Source {
+public final class ConfinedSource<Input, Output>: Source {
     
     private let gate: Gate<Input, Output>
     
@@ -167,7 +167,7 @@ public extension Drain {
     
 }
 
-public final class СonfinedDrain<Input, Output>: Drain {
+public final class ConfinedDrain<Input, Output>: Drain {
     
     private let gate: Gate<Input, Output>
     
@@ -751,12 +751,12 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
 
 public extension Gate {
     
-    var toSource: any Source<Input, Output> {
-        СonfinedSource(gate: self)
+    var toSource: ConfinedSource<Input, Output> {
+        ConfinedSource(gate: self)
     }
     
-    var toDrain: any Drain<Input, Output> {
-        СonfinedDrain(gate: self)
+    var toDrain: ConfinedDrain<Input, Output> {
+        ConfinedDrain(gate: self)
     }
     
 }
