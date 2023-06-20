@@ -13,6 +13,70 @@
 
 import Foundation
 
+public protocol Drain<Input, Output>: Sendable {
+    
+    associatedtype Input
+    associatedtype Output
+    
+    var isSealed: Bool { get }
+    
+    @discardableResult
+    func send(producerId: UInt64, _ provider: @escaping () async throws -> Input) async throws -> Output
+    
+    func sender(producerId: UInt64, provider: AsyncThrowingStream<Input, Error>) -> AsyncThrowingStream<Output, Error>
+    
+}
+
+public extension Drain {
+    
+    @discardableResult
+    func send(producerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), _ provider: @autoclosure @escaping () async throws -> Input) async throws -> Output {
+        try await send(producerId: producerId, provider)
+    }
+    
+    @discardableResult
+    func send(producerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), _ provider: @escaping () async throws -> Input) async throws -> Output {
+        try await send(producerId: producerId, provider)
+    }
+
+    func sender(producerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), provider: AsyncThrowingStream<Input, Error>) -> AsyncThrowingStream<Output, Error> {
+        sender(producerId: producerId, provider: provider)
+    }
+    
+}
+
+public extension Drain {
+
+    @discardableResult
+    func send<Element>(producerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), _ provider: Element...) async throws -> Output where Input == Array<Element> {
+        return try await send(producerId: producerId, provider)
+    }
+    
+}
+
+public final class ConfinedDrain<Input, Output>: Drain {
+    
+    private let gate: Gate<Input, Output>
+    
+    fileprivate init(gate: Gate<Input, Output>) {
+        self.gate = gate
+    }
+    
+    public var isSealed: Bool {
+        gate.isSealed
+    }
+    
+    @discardableResult
+    public func send(producerId: UInt64, _ provider: @escaping () async throws -> Input) async throws -> Output {
+        try await gate.send(producerId: producerId, provider)
+    }
+    
+    public func sender(producerId: UInt64, provider: AsyncThrowingStream<Input, Error>) -> AsyncThrowingStream<Output, Error> {
+        gate.sender(producerId: producerId, provider: provider)
+    }
+    
+}
+
 public protocol Source<Input, Output>: Sendable {
     
     associatedtype Input
@@ -74,10 +138,12 @@ public extension Source {
 
 public extension Source where Output == Void {
     
+    @discardableResult
     func receive(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), spec: any Spec<Input> = trueSpec()) async throws -> Input {
         try await receive(consumerId: consumerId, spec: spec, instantOutput: ())
     }
     
+    @discardableResult
     func receive<SubInput>(consumerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max)) async throws -> SubInput {
         try await receive(consumerId: consumerId, instantOutput: ())
     }
@@ -104,10 +170,12 @@ public final class ConfinedSource<Input, Output>: Source {
         gate.isSealed
     }
     
+    @discardableResult
     public func process(consumerId: UInt64, spec: any Spec<Input>, operation: (Input) async throws -> Output) async throws -> Output {
         try await gate.process(consumerId: consumerId, spec: spec, operation: operation)
     }
     
+    @discardableResult
     public func receive(consumerId: UInt64, spec: any Spec<Input>, instantOutput: Output) async throws -> Input {
         try await gate.receive(consumerId: consumerId, spec: spec, instantOutput: instantOutput)
     }
@@ -118,81 +186,6 @@ public final class ConfinedSource<Input, Output>: Source {
     
     public func receiver(consumerId: UInt64, spec: any Spec<Input>, instantOutput: Output) -> AsyncThrowingStream<Input, Error> {
         gate.receiver(consumerId: consumerId, spec: spec, instantOutput: instantOutput)
-    }
-    
-}
-
-public protocol Drain<Input, Output>: Sendable {
-    
-    associatedtype Input
-    associatedtype Output
-    
-    var isSealed: Bool { get }
-    
-    func send(producerId: UInt64, _ provider: @escaping () async throws -> Input) async throws -> Output
-    
-    func sender(producerId: UInt64, provider: AsyncThrowingStream<Input, Error>) -> AsyncThrowingStream<Output, Error>
-    
-}
-
-public extension Drain {
-    
-    func send(producerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), _ provider: @autoclosure @escaping () async throws -> Input) async throws -> Output {
-        try await send(producerId: producerId, provider)
-    }
-    
-    func send(producerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), _ provider: @escaping () async throws -> Input) async throws -> Output {
-        try await send(producerId: producerId, provider)
-    }
-    
-    func trySend(producerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), _ provider: @autoclosure @escaping () async throws -> Input) async -> Output? {
-        do {
-            return try await send(producerId: producerId, provider)
-        } catch {
-            return nil
-        }
-    }
-    
-    func trySend(producerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), _ provider: @escaping () async throws -> Input) async -> Output? {
-        do {
-            return try await send(producerId: producerId, provider)
-        } catch {
-            return nil
-        }
-    }
-
-    func sender(producerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), provider: AsyncThrowingStream<Input, Error>) -> AsyncThrowingStream<Output, Error> {
-        sender(producerId: producerId, provider: provider)
-    }
-    
-}
-
-public extension Drain {
-
-    func send<Element>(producerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), _ provider: Element...) async throws -> Output where Input == Array<Element> {
-        return try await send(producerId: producerId, provider)
-    }
-    
-}
-
-public final class ConfinedDrain<Input, Output>: Drain {
-    
-    private let gate: Gate<Input, Output>
-    
-    fileprivate init(gate: Gate<Input, Output>) {
-        self.gate = gate
-    }
-    
-    public var isSealed: Bool {
-        gate.isSealed
-    }
-    
-    public func send(producerId: UInt64, _ provider: @escaping () async throws -> Input) async throws -> Output {
-        try await gate.send(producerId: producerId, provider)
-    }
-    
-    public func sender(producerId: UInt64, provider: AsyncThrowingStream<Input, Error>) -> AsyncThrowingStream<Output, Error> {
-        gate.sender(producerId: producerId, provider: provider)
     }
     
 }
@@ -350,6 +343,7 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
         )
     }
     
+    @discardableResult
     public func send(producerId: UInt64, _ provider: @escaping () async throws -> Input) async throws -> Output {
         let input = try await provider()
         return try await produce(input, producerId: producerId)
