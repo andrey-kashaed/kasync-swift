@@ -167,6 +167,14 @@ public extension Drain {
     
 }
 
+public extension Drain {
+
+    func send<Element>(producerId: UInt64 = UInt64.random(in: UInt64.min...UInt64.max), _ provider: Element...) async throws -> Output where Input == Array<Element> {
+        return try await send(producerId: producerId, provider)
+    }
+    
+}
+
 public final class ConfinedDrain<Input, Output>: Drain {
     
     private let gate: Gate<Input, Output>
