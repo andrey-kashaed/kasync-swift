@@ -338,6 +338,11 @@ public func iterateInfinitely() -> AsyncStream<Void> {
 
 public extension AsyncSequence {
     
+    func collect(interval: Duration) -> AsyncThrowingStream<[Element], Error> where Element: Sendable, AsyncIterator: Sendable {
+        let provider = CollectProvider(collectInterval: interval, iterator: self.makeAsyncIterator(), clock: .continuous)
+        return AsyncThrowingStream(unfolding: provider.next)
+    }
+    
     func debounce(interval: Duration) -> AsyncThrowingStream<Element, Error> where Element: Sendable, AsyncIterator: Sendable {
         let provider = DebounceProvider(debounceInterval: interval, iterator: self.makeAsyncIterator(), clock: .continuous)
         return AsyncThrowingStream(unfolding: provider.next)
@@ -348,6 +353,79 @@ public extension AsyncSequence {
         return AsyncThrowingStream(unfolding: provider.next)
     }
     
+}
+
+fileprivate final class CollectProvider<PartialElement> {
+    
+    public typealias Element = [PartialElement]
+
+    private var terminated = false
+    private let gate: Gate<Result<Element?, Error>, Void>
+    private let tasks: [Task<Void, Never>]
+    
+    fileprivate init<I: AsyncIteratorProtocol & Sendable, C: Clock>(collectInterval: C.Duration, iterator: I, clock: C) where I.Element == PartialElement {
+        let gate = Gate<Result<Element?, Error>, Void>(mode: .cumulative(), scheme: .anycast)
+        self.gate = gate
+        @UncheckedReference var candidateElement: Element = []
+        let mutex = Mutex()
+        tasks = [
+            Task<Void, Never>.detached {
+                var iterator = iterator
+                while !Task.isCancelled {
+                    @UncheckedReference var partialElement: PartialElement? = nil
+                    do {
+                        try await $partialElement =^ iterator.next()
+                        await mutex.atomic {
+                            if let element = partialElement {
+                                $candidateElement =^ (candidateElement + [element])
+                            } else {
+                                try? await gate.send(.success(nil))
+                                gate.seal()
+                            }
+                        }
+                    } catch {
+                        await mutex.atomic {
+                            try? await gate.send(.failure(error))
+                            gate.seal()
+                        }
+                    }
+                }
+            },
+            Task<Void, Never>.detached {
+                while !Task.isCancelled {
+                    try? await clock.sleep(until: clock.now.advanced(by: collectInterval), tolerance: nil)
+                    await mutex.atomic {
+                        let element: Element = candidateElement
+                        $candidateElement =^ []
+                        try? await gate.send(.success(element))
+                    }
+                }
+            }
+        ]
+    }
+    
+    func next() async throws -> Element? {
+        guard !terminated else { return nil }
+        switch try? await gate.receive() {
+        case .success(let element):
+            if element == nil {
+                terminateUnsafe()
+            }
+            return element
+        case .failure(let error):
+            terminateUnsafe()
+            throw error
+        case .none:
+            terminateUnsafe()
+            return nil
+        }
+    }
+    
+    private func terminateUnsafe() {
+        terminated = true
+        tasks.forEach({ $0.cancel() })
+    }
+
 }
 
 fileprivate final class DebounceProvider<Element: Sendable> {
