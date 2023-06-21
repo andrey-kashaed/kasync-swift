@@ -158,6 +158,34 @@ struct TimedOutError: LocalizedError {
     public var errorDescription: String? { "Operation is interrupted because timed out!" }
 }
 
+public extension Sequence {
+    
+    func forEachAsync(_ operation: (Element) async throws -> Void) async rethrows {
+        for element in self {
+            try await operation(element)
+        }
+    }
+    
+    func mapAsync<T>(_ transform: (Element) async throws -> T) async rethrows -> [T] {
+        var elements = [T]()
+        for element in self {
+            try await elements.append(transform(element))
+        }
+        return elements
+    }
+    
+    func flatMapAsync<SegmentOfResult>(_ transform: (Element) async throws -> SegmentOfResult) async rethrows -> [SegmentOfResult.Element] where SegmentOfResult: Sequence {
+        var elements = [SegmentOfResult.Element]()
+        for element in self {
+            for element in try await transform(element) {
+                elements.append(element)
+            }
+        }
+        return elements
+    }
+    
+}
+
 public extension AsyncStream {
     
     init(unfolding produce: @escaping () async -> Element?, onTerminate: @escaping () -> Void, onCancel: (@Sendable () -> Void)? = nil) {
