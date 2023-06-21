@@ -68,10 +68,11 @@ public struct Cancellation: Sendable {
 }
 
 @discardableResult
-public func runBlocking<Success, Failure>(_ operation: @Sendable @escaping () async -> Result<Success, Failure>) -> Result<Success, Failure> {
+public func runBlocking<R>(_ operation: @Sendable @escaping () async -> R) -> R {
     let semaphore = DispatchSemaphore(value: 0)
-    @UncheckedReference var result: Result<Success, Failure>? = nil
-    Task.detached {
+    @UncheckedReference var result: R? = nil
+    let priority = Task.currentPriority
+    Task.detached(priority: priority) {
         await $result =^ operation()
         semaphore.signal()
     }
@@ -80,10 +81,11 @@ public func runBlocking<Success, Failure>(_ operation: @Sendable @escaping () as
 }
 
 @discardableResult
-public func runBlocking<Success>(_ operation: @Sendable @escaping () async throws -> Success) throws -> Success {
+public func runBlocking<R>(_ operation: @Sendable @escaping () async throws -> R) throws -> R {
     let semaphore = DispatchSemaphore(value: 0)
-    @UncheckedReference var result: Result<Success, Error>? = nil
-    Task.detached {
+    @UncheckedReference var result: Result<R, Error>? = nil
+    let priority = Task.currentPriority
+    Task.detached(priority: priority) {
         do {
             $result =^ .success(try await operation())
         } catch {
@@ -93,39 +95,67 @@ public func runBlocking<Success>(_ operation: @Sendable @escaping () async throw
     }
     semaphore.wait()
     switch result! {
-    case .success(let value):
-        return value
+    case .success(let r):
+        return r
     case .failure(let error):
         throw error
     }
 }
 
 @discardableResult
-public func runBlocking<Success>(_ operation: @Sendable @escaping () async -> Success) -> Success {
+public func runBlocking<R>(timeout: DispatchTime, _ operation: @Sendable @escaping () async throws -> R) throws -> R {
     let semaphore = DispatchSemaphore(value: 0)
-    @UncheckedReference var result: Success? = nil
-    Task.detached {
-        await $result =^ operation()
-        semaphore.signal()
-    }
-    semaphore.wait()
-    return result!
-}
-
-@discardableResult
-public func runBlocking<Success>(timeout: DispatchTime, _ operation: @Sendable @escaping () async -> Success) -> Success? {
-    let semaphore = DispatchSemaphore(value: 0)
-    @UncheckedReference var result: Success? = nil
-    Task.detached {
-        await $result =^ operation()
+    @UncheckedReference var result: Result<R, Error>? = nil
+    let priority = Task.currentPriority
+    Task.detached(priority: priority) {
+        do {
+            $result =^ .success(try await operation())
+        } catch {
+            $result =^ .failure(error)
+        }
         semaphore.signal()
     }
     switch semaphore.wait(timeout: timeout) {
     case .success:
-        return result
+        switch result! {
+        case .success(let r):
+            return r
+        case .failure(let error):
+            throw error
+        }
     case .timedOut:
-        return nil
+        throw TimedOutError()
     }
+}
+
+@discardableResult
+public func runBlocking<R>(wallTimeout: DispatchWallTime, _ operation: @Sendable @escaping () async throws -> R) throws -> R {
+    let semaphore = DispatchSemaphore(value: 0)
+    @UncheckedReference var result: Result<R, Error>? = nil
+    let priority = Task.currentPriority
+    Task.detached(priority: priority) {
+        do {
+            $result =^ .success(try await operation())
+        } catch {
+            $result =^ .failure(error)
+        }
+        semaphore.signal()
+    }
+    switch semaphore.wait(wallTimeout: wallTimeout) {
+    case .success:
+        switch result! {
+        case .success(let r):
+            return r
+        case .failure(let error):
+            throw error
+        }
+    case .timedOut:
+        throw TimedOutError()
+    }
+}
+
+struct TimedOutError: LocalizedError {
+    public var errorDescription: String? { "Operation is interrupted because timed out!" }
 }
 
 public extension AsyncStream {
