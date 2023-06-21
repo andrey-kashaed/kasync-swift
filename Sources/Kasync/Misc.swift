@@ -353,6 +353,11 @@ public extension AsyncSequence {
         return AsyncThrowingStream(unfolding: provider.next)
     }
     
+    func timeout(interval: Duration) -> AsyncThrowingStream<Element, Error> where Element: Sendable, AsyncIterator: Sendable {
+        let provider = TimeoutProvider(timeoutInterval: interval, iterator: self.makeAsyncIterator(), clock: .continuous)
+        return AsyncThrowingStream(unfolding: provider.next)
+    }
+    
 }
 
 fileprivate final class CollectProvider<PartialElement> {
@@ -470,7 +475,7 @@ fileprivate final class DebounceProvider<Element: Sendable> {
                 while !Task.isCancelled {
                     @UncheckedReference var sleepInterval: C.Duration? = nil
                     await mutex.atomic {
-                        guard let candidateInterval: C.Duration = letNotNil(candidateTimestamp, { $0.duration(to: clock.now) }) , let element: Element = candidateElement else {
+                        guard let candidateInterval: C.Duration = letNotNil(candidateTimestamp, { $0.duration(to: clock.now) }), let element: Element = candidateElement else {
                             $sleepInterval =^ nil
                             return
                         }
@@ -558,6 +563,87 @@ fileprivate final class ThrottleProvider<Element: Sendable> {
                         }
                         $candidateElement =^ nil
                         try? await gate.send(.success(element))
+                    }
+                }
+            }
+        ]
+    }
+    
+    func next() async throws -> Element? {
+        guard !terminated else { return nil }
+        switch try? await gate.receive() {
+        case .success(let element):
+            if element == nil {
+                terminateUnsafe()
+            }
+            return element
+        case .failure(let error):
+            terminateUnsafe()
+            throw error
+        case .none:
+            terminateUnsafe()
+            return nil
+        }
+    }
+    
+    private func terminateUnsafe() {
+        terminated = true
+        tasks.forEach({ $0.cancel() })
+    }
+
+}
+
+fileprivate final class TimeoutProvider<Element: Sendable> {
+    
+    private var terminated = false
+    private let gate: Gate<Result<Element?, Error>, Void>
+    private let tasks: [Task<Void, Never>]
+    
+    public init<I: AsyncIteratorProtocol & Sendable, C: Clock>(timeoutInterval: C.Duration, iterator: I, clock: C) where I.Element == Element {
+        let gate = Gate<Result<Element?, Error>, Void>(mode: .cumulative(), scheme: .anycast)
+        self.gate = gate
+        @UncheckedReference var candidateTimestamp: C.Instant? = nil
+        let mutex = Mutex()
+        tasks = [
+            Task<Void, Never>.detached {
+                var iterator = iterator
+                while !Task.isCancelled {
+                    @UncheckedReference var element: Element? = nil
+                    do {
+                        try await $element =^ iterator.next()
+                        await mutex.atomic {
+                            if let element = element {
+                                $candidateTimestamp =^ clock.now
+                                try? await gate.send(.success(element))
+                            } else {
+                                try? await gate.send(.success(nil))
+                                gate.seal()
+                            }
+                        }
+                    } catch {
+                        await mutex.atomic {
+                            try? await gate.send(.failure(error))
+                            gate.seal()
+                        }
+                    }
+                }
+            },
+            Task<Void, Never>.detached {
+                @UncheckedReference var sleepInterval: C.Duration? = timeoutInterval
+                while !Task.isCancelled {
+                    if let sleepInterval {
+                        try? await clock.sleep(until: clock.now.advanced(by: sleepInterval), tolerance: nil)
+                    } else {
+                        try? await gate.send(.failure(TimedOutError()))
+                        gate.seal()
+                        break
+                    }
+                    await mutex.atomic {
+                        guard let candidateInterval: C.Duration = letNotNil(candidateTimestamp, { $0.duration(to: clock.now) }), candidateInterval < timeoutInterval else {
+                            $sleepInterval =^ nil
+                            return
+                        }
+                        $sleepInterval =^ max(C.Duration.zero, timeoutInterval - candidateInterval)
                     }
                 }
             }
