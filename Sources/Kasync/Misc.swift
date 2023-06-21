@@ -343,6 +343,11 @@ public extension AsyncSequence {
         return AsyncThrowingStream(unfolding: provider.next)
     }
     
+    func throttle(interval: Duration) -> AsyncThrowingStream<Element, Error> where Element: Sendable, AsyncIterator: Sendable {
+        let provider = ThrottleProvider(throttleInterval: interval, iterator: self.makeAsyncIterator(), clock: .continuous)
+        return AsyncThrowingStream(unfolding: provider.next)
+    }
+    
 }
 
 fileprivate final class DebounceProvider<Element: Sendable> {
@@ -366,12 +371,12 @@ fileprivate final class DebounceProvider<Element: Sendable> {
                     do {
                         try await $element =^ iterator.next()
                         await mutex.atomic {
-                            if element == nil {
-                                try? await gate.send(.success(nil))
-                                gate.seal()
-                            } else {
+                            if let element = element {
                                 $candidateTimestamp =^ clock.now
                                 $candidateElement =^ element
+                            } else {
+                                try? await gate.send(.success(nil))
+                                gate.seal()
                             }
                         }
                     } catch {
@@ -430,4 +435,77 @@ fileprivate final class DebounceProvider<Element: Sendable> {
         tasks.forEach({ $0.cancel() })
     }
     
+}
+
+fileprivate final class ThrottleProvider<Element: Sendable> {
+
+    private var terminated = false
+    private let gate: Gate<Result<Element?, Error>, Void>
+    private let tasks: [Task<Void, Never>]
+    
+    public init<I: AsyncIteratorProtocol & Sendable, C: Clock>(throttleInterval: C.Duration, iterator: I, clock: C) where I.Element == Element {
+        let gate = Gate<Result<Element?, Error>, Void>(mode: .cumulative(), scheme: .anycast)
+        self.gate = gate
+        @UncheckedReference var candidateElement: Element? = nil
+        let mutex = Mutex()
+        tasks = [
+            Task<Void, Never>.detached {
+                var iterator = iterator
+                while !Task.isCancelled {
+                    @UncheckedReference var element: Element? = nil
+                    do {
+                        try await $element =^ iterator.next()
+                        await mutex.atomic {
+                            if let element = element {
+                                $candidateElement =^ element
+                            } else {
+                                try? await gate.send(.success(nil))
+                                gate.seal()
+                            }
+                        }
+                    } catch {
+                        await mutex.atomic {
+                            try? await gate.send(.failure(error))
+                            gate.seal()
+                        }
+                    }
+                }
+            },
+            Task<Void, Never>.detached {
+                while !Task.isCancelled {
+                    try? await clock.sleep(until: clock.now.advanced(by: throttleInterval), tolerance: nil)
+                    await mutex.atomic {
+                        guard let element: Element = candidateElement else {
+                            return
+                        }
+                        $candidateElement =^ nil
+                        try? await gate.send(.success(element))
+                    }
+                }
+            }
+        ]
+    }
+    
+    func next() async throws -> Element? {
+        guard !terminated else { return nil }
+        switch try? await gate.receive() {
+        case .success(let element):
+            if element == nil {
+                terminateUnsafe()
+            }
+            return element
+        case .failure(let error):
+            terminateUnsafe()
+            throw error
+        case .none:
+            terminateUnsafe()
+            return nil
+        }
+    }
+    
+    private func terminateUnsafe() {
+        terminated = true
+        tasks.forEach({ $0.cancel() })
+    }
+
 }
