@@ -218,19 +218,9 @@ extension GateError: LocalizedError {
 public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible, @unchecked Sendable {
     
     public enum Mode: Equatable {
-        case cumulative(capacity: Int = Int.max)
-        case retainable(capacity: Int = Int.max)
-        case transient(capacity: Int = Int.max)
-        var capacity: Int {
-            switch self {
-            case .cumulative(let capacity):
-                return capacity
-            case .retainable(let capacity):
-                return capacity
-            case .transient(let capacity):
-                return capacity
-            }
-        }
+        case cumulative
+        case retainable
+        case transient
     }
     
     public enum Scheme {
@@ -262,6 +252,7 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
     
     private let mode: Mode
     private let scheme: Scheme
+    private let capacity: Int
     private var producerContinuations: [UInt64: CheckedContinuation<Output, Error>] = [:]
     private var consumerContinuations: [UInt64: CheckedContinuation<Input, Error>] = [:]
     private var attachedConsumerIds: [UInt64: any Spec<Input>] = [:]
@@ -273,9 +264,10 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
     private var sealError: Error? = nil
     private let lock = NSRecursiveLock()
     
-    public init(mode: Mode, scheme: Scheme) {
+    public init(mode: Mode, scheme: Scheme, capacity: Int = Int.max) {
         self.mode = mode
         self.scheme = scheme
+        self.capacity = capacity
     }
     
     public func seal() {
@@ -693,7 +685,7 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
     
     private func enqueueSupply(_ supply: Supply) {
         lock.withLock {
-            while supplyQueue.count >= mode.capacity {
+            while supplyQueue.count >= capacity {
                 if let supply = supplyQueue.popFirst() {
                     discardProducer(producerId: supply.producerId)
                 }

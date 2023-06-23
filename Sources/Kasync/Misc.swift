@@ -49,10 +49,10 @@ public struct Cancellation: Sendable {
     
     init() {
         let lock = NSLock()
-        let canceled = UncheckedReference(wrappedValue: false)
-        let internalOnCancel = UncheckedReference(wrappedValue: { @Sendable in lock.withLock { canceled =^ true } })
-        _internalOnCancel = internalOnCancel
-        _canceled = canceled
+        @UncheckedReference var canceled = false
+        @UncheckedReference var internalOnCancel = { @Sendable in lock.withLock { $canceled =^ true } }
+        self._internalOnCancel = _internalOnCancel
+        self._canceled = _canceled
         self.lock = lock
     }
     
@@ -397,7 +397,7 @@ fileprivate final class CollectProvider<PartialElement> {
     private let tasks: [Task<Void, Never>]
     
     fileprivate init<I: AsyncIteratorProtocol & Sendable, C: Clock>(collectInterval: C.Duration, iterator: I, clock: C) where I.Element == PartialElement {
-        let gate = Gate<Result<Element?, Error>, Void>(mode: .cumulative(), scheme: .anycast)
+        let gate = Gate<Result<Element?, Error>, Void>(mode: .cumulative, scheme: .anycast)
         self.gate = gate
         @UncheckedReference var candidateElement: Element = []
         let mutex = Mutex()
@@ -468,7 +468,7 @@ fileprivate final class DebounceProvider<Element: Sendable> {
     private let tasks: [Task<Void, Never>]
     
     fileprivate init<I: AsyncIteratorProtocol & Sendable, C: Clock>(debounceInterval: C.Duration, iterator: I, clock: C) where I.Element == Element {
-        let gate = Gate<Result<Element?, Error>, Void>(mode: .cumulative(), scheme: .anycast)
+        let gate = Gate<Result<Element?, Error>, Void>(mode: .cumulative, scheme: .anycast)
         self.gate = gate
         @UncheckedReference var candidateTimestamp: C.Instant? = nil
         @UncheckedReference var candidateElement: Element? = nil
@@ -555,7 +555,7 @@ fileprivate final class ThrottleProvider<Element: Sendable> {
     private let tasks: [Task<Void, Never>]
     
     public init<I: AsyncIteratorProtocol & Sendable, C: Clock>(throttleInterval: C.Duration, iterator: I, clock: C) where I.Element == Element {
-        let gate = Gate<Result<Element?, Error>, Void>(mode: .cumulative(), scheme: .anycast)
+        let gate = Gate<Result<Element?, Error>, Void>(mode: .cumulative, scheme: .anycast)
         self.gate = gate
         @UncheckedReference var candidateElement: Element? = nil
         let mutex = Mutex()
@@ -628,7 +628,7 @@ fileprivate final class TimeoutProvider<Element: Sendable> {
     private let tasks: [Task<Void, Never>]
     
     public init<I: AsyncIteratorProtocol & Sendable, C: Clock>(timeoutInterval: C.Duration, iterator: I, clock: C) where I.Element == Element {
-        let gate = Gate<Result<Element?, Error>, Void>(mode: .cumulative(), scheme: .anycast)
+        let gate = Gate<Result<Element?, Error>, Void>(mode: .cumulative, scheme: .anycast)
         self.gate = gate
         @UncheckedReference var candidateTimestamp: C.Instant? = nil
         let mutex = Mutex()
