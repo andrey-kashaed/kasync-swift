@@ -308,7 +308,7 @@ public postfix func *~<S: AsyncSequence>(_ sequence: S) -> AsyncRethrowingStream
     return AsyncRethrowingStream(iterator: iterator)
 }
 
-public func iterate<Element>(cancelable: Bool = true, elements: [Element]) -> AsyncStream<Element> {
+public func iterate<Element>(cancelable: Bool = true, delay: Duration? = nil, elements: [Element]) -> AsyncStream<Element> {
     let count = elements.count
     var i = 0
     let next: () async -> Element? = {
@@ -316,12 +316,15 @@ public func iterate<Element>(cancelable: Bool = true, elements: [Element]) -> As
             return nil
         }
         defer { i += 1 }
+        if let delay {
+            try? await Task.sleep(for: delay)
+        }
         return elements[i]
     }
     return AsyncStream(unfolding: next)
 }
 
-public func iterate<Element>(cancelable: Bool = true, elements: Element...) -> AsyncStream<Element> {
+public func iterate<Element>(cancelable: Bool = true, delay: Duration? = nil, elements: Element...) -> AsyncStream<Element> {
     let count = elements.count
     var i = 0
     let next: () async -> Element? = {
@@ -329,39 +332,48 @@ public func iterate<Element>(cancelable: Bool = true, elements: Element...) -> A
             return nil
         }
         defer { i += 1 }
+        if let delay {
+            try? await Task.sleep(for: delay)
+        }
         return elements[i]
     }
     return AsyncStream(unfolding: next)
 }
 
-public func iterate<Element>(cancelable: Bool = true, count: Int, element: @autoclosure @escaping () -> Element) -> AsyncStream<Element> {
+public func iterate<Element>(cancelable: Bool = true, delay: Duration? = nil, count: Int, element: @autoclosure @escaping () -> Element) -> AsyncStream<Element> {
     var i = 0
     let next: () async -> Element? = {
         if i >= count || (cancelable && Task.isCancelled) {
             return nil
         }
         defer { i += 1 }
+        if let delay {
+            try? await Task.sleep(for: delay)
+        }
         return element()
     }
     return AsyncStream(unfolding: next)
 }
 
-public func iterate(cancelable: Bool = true, count: Int) -> AsyncStream<Void> {
-    iterate(cancelable: cancelable, count: count, element: ())
+public func iterate(cancelable: Bool = true, delay: Duration? = nil, count: Int) -> AsyncStream<Void> {
+    iterate(cancelable: cancelable, delay: delay, count: count, element: ())
 }
 
-public func iterateInfinitely<Element>(element: @autoclosure @escaping () -> Element) -> AsyncStream<Element> {
+public func iterateInfinitely<Element>(delay: Duration? = nil, element: @autoclosure @escaping () -> Element) -> AsyncStream<Element> {
     let next: () async -> Element? = {
         if Task.isCancelled {
             return nil
         }
+        if let delay {
+            try? await Task.sleep(for: delay)
+        }
         return element()
     }
     return AsyncStream(unfolding: next)
 }
 
-public func iterateInfinitely() -> AsyncStream<Void> {
-    iterateInfinitely(element: ())
+public func iterateInfinitely(delay: Duration? = nil) -> AsyncStream<Void> {
+    iterateInfinitely(delay: delay, element: ())
 }
 
 public extension AsyncSequence {
