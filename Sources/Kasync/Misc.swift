@@ -400,6 +400,17 @@ public extension AsyncSequence {
     
 }
 
+public func chain<Element, I: AsyncIteratorProtocol, S: AsyncSequence>(_ sequences: [S]) -> AsyncRethrowingStream<Element, ChainIterator<Element, I>> where S.Element == Element, S.AsyncIterator == I {
+    let iterator = ChainIterator<Element, I>(iterators: sequences.map { $0.makeAsyncIterator() })
+    return AsyncRethrowingStream(iterator: iterator)
+}
+
+infix operator *-*
+
+public func *-* <Element, I: AsyncIteratorProtocol, S: AsyncSequence>(s1: S, s2: S) -> AsyncRethrowingStream<Element, ChainIterator<Element, I>> where S.Element == Element, S.AsyncIterator == I {
+    chain([s1, s2])
+}
+
 fileprivate final class CollectProvider<PartialElement> {
     
     public typealias Element = [PartialElement]
@@ -713,3 +724,42 @@ fileprivate final class TimeoutProvider<Element: Sendable> {
     }
 
 }
+
+public final class ChainIterator<Element, I: AsyncIteratorProtocol>: AsyncIteratorProtocol where I.Element == Element {
+    
+    private var terminated = false
+    private var iterators: [I]
+    private let count: Int
+    private var index: Int
+    
+    fileprivate init(iterators: [I]) {
+        count = iterators.count
+        index = 0
+        self.iterators = iterators
+    }
+    
+    public func next() async rethrows -> Element? {
+        guard !terminated else { return nil }
+        do {
+            while true {
+                let element = try await iterators[index].next()
+                if let element {
+                    return element
+                } else {
+                    if index < count - 1 {
+                        index += 1
+                        continue
+                    } else {
+                        terminated = true
+                        return nil
+                    }
+                }
+            }
+        } catch {
+            terminated = true
+            throw error
+        }
+    }
+    
+}
+
