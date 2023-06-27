@@ -411,6 +411,23 @@ public func *-* <Element, I: AsyncIteratorProtocol, S: AsyncSequence>(s1: S, s2:
     chain([s1, s2])
 }
 
+public func merge<Element, S: AsyncSequence>(policy: MergePolicy, _ sequences: [S]) -> AsyncThrowingStream<Element, Error> where S.Element == Element {
+    let provider = MergeProvider(policy: policy, iterators: sequences.map { $0.makeAsyncIterator() })
+    return AsyncThrowingStream(unfolding: provider.next)
+}
+
+infix operator *&*
+
+public func *&* <Element, S: AsyncSequence>(s1: S, s2: S) -> AsyncThrowingStream<Element, Error> where S.Element == Element {
+    merge(policy: .conjunctive, [s1, s2])
+}
+
+infix operator *|*
+
+public func *|* <Element, S: AsyncSequence>(s1: S, s2: S) -> AsyncThrowingStream<Element, Error> where S.Element == Element {
+    merge(policy: .disjunctive, [s1, s2])
+}
+
 fileprivate final class CollectProvider<PartialElement> {
     
     public typealias Element = [PartialElement]
@@ -763,3 +780,71 @@ public final class ChainIterator<Element, I: AsyncIteratorProtocol>: AsyncIterat
     
 }
 
+public enum MergePolicy {
+    case conjunctive, disjunctive
+}
+
+public class MergeProvider<Element> {
+    
+    private var terminated = false
+    private let gate: Gate<Result<Element?, Error>, Void>
+    private let tasks: [Task<Void, Never>]
+    
+    public init<I: AsyncIteratorProtocol>(policy: MergePolicy, iterators: [I]) where I.Element == Element {
+        let gate = Gate<Result<Element?, Error>, Void>(mode: .cumulative, scheme: .anycast)
+        self.gate = gate
+        @AtomicReference(iterators.count) var iteratorCounter
+        tasks = iterators.map { iterator in
+            Task<Void, Never>.detached {
+                var iterator = iterator
+                while !Task.isCancelled {
+                    do {
+                        let element = try await iterator.next()
+                        if let element {
+                            try? await gate.send(.success(element))
+                        } else {
+                            switch policy {
+                            case .conjunctive:
+                                try? await gate.send(.success(nil))
+                                gate.seal()
+                            case .disjunctive:
+                                if await iteratorCounter.atomic({ $0 -= 1; return $0 <= 0 }) {
+                                    try? await gate.send(.success(nil))
+                                    gate.seal()
+                                }
+                            }
+                            break
+                        }
+                    } catch {
+                        try? await gate.send(.failure(error))
+                        gate.seal()
+                        break
+                    }
+                }
+            }
+        }
+    }
+    
+    public func next() async throws -> Element? {
+        guard !terminated else { return nil }
+        switch try? await gate.receive() {
+        case .success(let element):
+            if element == nil {
+                terminateUnsafe()
+            }
+            return element
+        case .failure(let error):
+            terminateUnsafe()
+            throw error
+        case .none:
+            terminateUnsafe()
+            return nil
+        }
+    }
+    
+    private func terminateUnsafe() {
+        terminated = true
+        tasks.forEach({ $0.cancel() })
+    }
+    
+}
