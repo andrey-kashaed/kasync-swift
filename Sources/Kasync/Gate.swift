@@ -13,7 +13,7 @@
 
 import Foundation
 
-public protocol Drain<Input, Output>: Sendable {
+public protocol Drain<Input, Output>: Sendable where Input: Sendable, Output: Sendable {
     
     associatedtype Input
     associatedtype Output
@@ -54,7 +54,7 @@ public extension Drain {
     
 }
 
-public final class ConfinedDrain<Input, Output>: Drain {
+public final class ConfinedDrain<Input, Output>: Drain where Input: Sendable, Output: Sendable {
     
     private let gate: Gate<Input, Output>
     
@@ -77,7 +77,7 @@ public final class ConfinedDrain<Input, Output>: Drain {
     
 }
 
-public protocol Source<Input, Output>: Sendable {
+public protocol Source<Input, Output>: Sendable where Input: Sendable, Output: Sendable {
     
     associatedtype Input
     associatedtype Output
@@ -158,7 +158,7 @@ public extension Source where Output == Void {
     
 }
 
-public final class ConfinedSource<Input, Output>: Source {
+public final class ConfinedSource<Input, Output>: Source where Input: Sendable, Output: Sendable {
     
     private let gate: Gate<Input, Output>
     
@@ -215,7 +215,7 @@ extension GateError: LocalizedError {
     }
 }
 
-public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible, @unchecked Sendable {
+public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConvertible, @unchecked Sendable where Input: Sendable, Output: Sendable {
     
     public enum Mode: Equatable {
         case cumulative
@@ -745,12 +745,12 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
 
 public extension Gate {
     
-    var toSource: ConfinedSource<Input, Output> {
-        ConfinedSource(gate: self)
-    }
-    
     var toDrain: ConfinedDrain<Input, Output> {
         ConfinedDrain(gate: self)
+    }
+    
+    var toSource: ConfinedSource<Input, Output> {
+        ConfinedSource(gate: self)
     }
     
 }

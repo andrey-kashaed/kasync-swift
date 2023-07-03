@@ -30,7 +30,7 @@ public final class UncheckedReference<Value>: @unchecked Sendable {
     
 }
 
-infix operator =^
+infix operator =^ : AssignmentPrecedence
 
 public func =^<Value>(left: UncheckedReference<Value>, right: Value) {
     left.value = right

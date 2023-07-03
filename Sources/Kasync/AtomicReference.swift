@@ -88,7 +88,7 @@ public postfix func ^<Value>(left: AtomicReference<Value>.BlockingSafeguard) -> 
     left.getValue()
 }
 
-infix operator =^
+infix operator =^ : AssignmentPrecedence
 
 public func =^<Value>(left: AtomicReference<Value>.Safeguard, right: Value) async {
     await left.setValue(value: right)

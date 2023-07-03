@@ -11,7 +11,7 @@
 // https://opensource.org/licenses/CDDL-1.0 or LICENSE.txt.
 //
 
-@preconcurrency import Foundation
+import Foundation
 
 public func withCancellableCheckedThrowingContinuation<T>(
     function: String = #function,
@@ -234,7 +234,7 @@ public extension AsyncThrowingStream {
 
 public struct AsyncRethrowingStream<Element, I: AsyncIteratorProtocol>: AsyncSequence where I.Element == Element {
     
-    public final class Iterator<Element, I: AsyncIteratorProtocol>: AsyncIteratorProtocol where I.Element == Element {
+    public final class Iterator: AsyncIteratorProtocol {
         
         private var iterator: I
         private let onTerminate: (() -> Void)?
@@ -271,7 +271,7 @@ public struct AsyncRethrowingStream<Element, I: AsyncIteratorProtocol>: AsyncSeq
         
     }
     
-    private let iterator: Iterator<Element, I>
+    private let iterator: Iterator
     
     public init(iterator: I, onTerminate: (() -> Void)? = nil) {
         self.iterator = Iterator(iterator: iterator, onTerminate: onTerminate)
@@ -281,7 +281,7 @@ public struct AsyncRethrowingStream<Element, I: AsyncIteratorProtocol>: AsyncSeq
         iterator.terminated
     }
 
-    public func makeAsyncIterator() -> Iterator<Element, I> {
+    public func makeAsyncIterator() -> Iterator {
         iterator
     }
     
