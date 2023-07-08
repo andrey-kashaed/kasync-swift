@@ -324,22 +324,6 @@ public func iterate<Element>(cancelable: Bool = true, delay: Duration? = nil, el
     return AsyncStream(unfolding: next)
 }
 
-public func iterate<Element>(cancelable: Bool = true, delay: Duration? = nil, elements: Element...) -> AsyncStream<Element> {
-    let count = elements.count
-    var i = 0
-    let next: () async -> Element? = {
-        if i >= count || (cancelable && Task.isCancelled) {
-            return nil
-        }
-        defer { i += 1 }
-        if let delay {
-            try? await Task.sleep(for: delay)
-        }
-        return elements[i]
-    }
-    return AsyncStream(unfolding: next)
-}
-
 public func iterate<Element>(cancelable: Bool = true, delay: Duration? = nil, count: Int, element: @autoclosure @escaping () -> Element) -> AsyncStream<Element> {
     var i = 0
     let next: () async -> Element? = {
