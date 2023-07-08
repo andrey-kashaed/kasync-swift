@@ -54,7 +54,7 @@ public extension Drain {
     
 }
 
-public final class ConfinedDrain<Input, Output>: Drain where Input: Sendable, Output: Sendable {
+public final class ConfinedDrain<Input, Output>: Drain, Sendable where Input: Sendable, Output: Sendable {
     
     private let gate: Gate<Input, Output>
     
@@ -158,7 +158,7 @@ public extension Source where Output == Void {
     
 }
 
-public final class ConfinedSource<Input, Output>: Source where Input: Sendable, Output: Sendable {
+public final class ConfinedSource<Input, Output>: Source, Sendable where Input: Sendable, Output: Sendable {
     
     private let gate: Gate<Input, Output>
     

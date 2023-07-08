@@ -11,7 +11,7 @@
 // https://opensource.org/licenses/CDDL-1.0 or LICENSE.txt.
 //
 
-public actor Mutex {
+public final actor Mutex {
     
     private lazy var sluice: Sluice = { Sluice(passCapacity: 1) }()
     private var sluicePartyCounter = 0

@@ -14,7 +14,7 @@
 @propertyWrapper
 public struct AtomicReference<Value: Sendable>: Sendable {
     
-    public actor Safeguard {
+    public final actor Safeguard {
         
         private var value: Value
         
