@@ -2,7 +2,7 @@
 
 ***Kasync*** is a library simplifying asynchronous programming in Swift.
 
-[![Latest Release](https://img.shields.io/badge/Latest%20Release-0.2.1-green)](https://github.com/andrey-kashaed/kasync-swift/releases/tag/0.2.1)
+[![Latest Release](https://img.shields.io/badge/Latest%20Release-0.2.2-green)](https://github.com/andrey-kashaed/kasync-swift/releases/tag/0.2.2)
 [![Swift](https://img.shields.io/badge/Swift-5.8-yellow)](https://www.swift.org/blog/swift-5.8-released)
 ![Platforms](https://img.shields.io/badge/Platforms-macOS%2013.0%2B%20%7C%20iOS%2016.0%2B%20%7C%20tvOS%2016.0%2B%20%7C%20watchOS%209.0%2B-red)
 [![License](https://img.shields.io/badge/License-CDDL--1.0-blue)](https://opensource.org/licenses/CDDL-1.0)
