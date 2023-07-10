@@ -305,6 +305,8 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
     public func discardProducer(producerId: UInt64) {
         lock.withLock {
             let _ = dequeueSupply(producerId: producerId)
+            let consumerIds = endTransmissions(producerId: producerId).map({ $0.consumerId })
+            let _ = collectReplies(consumerIds: consumerIds)
             guard let producerContinuation = removeProducerContinuation(producerId: producerId) else {
                 return
             }
@@ -315,6 +317,8 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
     public func discardConsumer(consumerId: UInt64) {
         lock.withLock {
             let _ = dequeueDemand(consumerId: consumerId)
+            let _ = endTransmissions(consumerId: consumerId)
+            let _ = collectReplies(consumerIds: [consumerId])
             if let consumerContinuation = removeConsumerContinuation(consumerId: consumerId) {
                 consumerContinuation.resume(throwing: GateError.discardedConsumer)
                 return
@@ -412,7 +416,11 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
                 gate.enqueueSupply(Supply(producerId: producerId, input: input))
                 gate.startTransmissionsIfRequired()
                 cancellation.onCancel = { [weak gate] in
-                    gate?.removeProducerContinuation(producerId: producerId)?.resume(throwing: GateError.canceledProducer)
+                    guard let gate = gate else { return }
+                    let _ = gate.dequeueSupply(producerId: producerId)
+                    let consumerIds = gate.endTransmissions(producerId: producerId).map({ $0.consumerId })
+                    let _ = gate.collectReplies(consumerIds: consumerIds)
+                    gate.removeProducerContinuation(producerId: producerId)?.resume(throwing: GateError.canceledProducer)
                 }
             }
         }
@@ -431,8 +439,12 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
                 gate.addConsumerContinuation(continuation, consumerId: consumerId)
                 gate.enqueueDemand(Demand(consumerId: consumerId, inputSpec: inputSpec))
                 gate.startTransmissionsIfRequired()
-                cancellation.onCancel = { [weak self] in
-                    self?.removeConsumerContinuation(consumerId: consumerId)?.resume(throwing: GateError.canceledConsumer)
+                cancellation.onCancel = { [weak gate] in
+                    guard let gate = gate else { return }
+                    let _ = gate.dequeueDemand(consumerId: consumerId)
+                    let _ = gate.endTransmissions(consumerId: consumerId)
+                    let _ = gate.collectReplies(consumerIds: [consumerId])
+                    gate.removeConsumerContinuation(consumerId: consumerId)?.resume(throwing: GateError.canceledConsumer)
                 }
             }
         }
@@ -453,9 +465,19 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
         }
     }
     
-    private func endTransactions(producerId: UInt64) -> [Transmission] {
+    private func endTransmissions(producerId: UInt64) -> [Transmission] {
         lock.withLock {
             let index = transmissions.partition(by: { $0.producerId == producerId })
+            if index == transmissions.count { return [] }
+            let endingTransmissions = transmissions[index...]
+            transmissions = Array(transmissions[..<index])
+            return Array(endingTransmissions)
+        }
+    }
+    
+    private func endTransmissions(consumerId: UInt64) -> [Transmission] {
+        lock.withLock {
+            let index = transmissions.partition(by: { $0.consumerId == consumerId })
             if index == transmissions.count { return [] }
             let endingTransmissions = transmissions[index...]
             transmissions = Array(transmissions[..<index])
@@ -584,7 +606,7 @@ public final class Gate<Input, Output>: Source, Drain, CustomDebugStringConverti
             for producerId in producerContinuations.keys {
                 if allRepliesAreReady(producerId: producerId) {
                     if let producerContinuation = removeProducerContinuation(producerId: producerId) {
-                        let consumerIds = endTransactions(producerId: producerId).map({ $0.consumerId })
+                        let consumerIds = endTransmissions(producerId: producerId).map({ $0.consumerId })
                         let collectedReplies = collectReplies(consumerIds: consumerIds)
                         var outputs: [Output] = []
                         var firstError: Error? = nil
