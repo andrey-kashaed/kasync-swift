@@ -583,6 +583,7 @@ fileprivate final class ThrottleProvider<Element: Sendable> {
         self.gate = gate
         @UncheckedReference var candidateElement: Element? = nil
         let mutex = Mutex()
+        let semaphore = Semaphore(initialPermits: 0)
         tasks = [
             Task<Void, Never>.detached {
                 var iterator = iterator
@@ -604,17 +605,25 @@ fileprivate final class ThrottleProvider<Element: Sendable> {
                             gate.seal()
                         }
                     }
+                    try? semaphore.signal()
                 }
             },
             Task<Void, Never>.detached {
                 while !Task.isCancelled {
-                    try? await clock.sleep(until: clock.now.advanced(by: throttleInterval), tolerance: nil)
+                    @UncheckedReference var sleepInterval: C.Duration? = nil
                     await mutex.atomic {
                         guard let element: Element = candidateElement else {
+                            $sleepInterval =^ nil
                             return
                         }
                         $candidateElement =^ nil
                         try? await gate.send(.success(element))
+                        $sleepInterval =^ throttleInterval
+                    }
+                    if let sleepInterval {
+                        try? await clock.sleep(until: clock.now.advanced(by: sleepInterval), tolerance: nil)
+                    } else {
+                        try? await semaphore.await()
                     }
                 }
             }
