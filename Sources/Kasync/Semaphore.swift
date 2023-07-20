@@ -62,7 +62,10 @@ public final class Semaphore: @unchecked Sendable {
     public func await(enabledAfterCancellation: Bool = false) async throws {
         try await withCancellableCheckedThrowingContinuation() { [weak self] (continuation: CheckedContinuation<Void, Error>, cancellation: Cancellation) -> Void in
             self?.withTransaction { semaphore in
-                if !semaphore.enabled { continuation.resume(throwing: SemaphoreError.disabledSemaphore) }
+                guard semaphore.enabled else {
+                    continuation.resume(throwing: SemaphoreError.disabledSemaphore)
+                    return
+                }
                 semaphore.enqueueContinuationUnsafe(continuation)
                 semaphore.resolveContinuationsUnsafe()
                 cancellation.onCancel = { [weak semaphore] in

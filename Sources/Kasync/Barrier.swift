@@ -56,7 +56,10 @@ public final class Barrier: @unchecked Sendable {
     public func await(enabledAfterCancellation: Bool = false) async throws {
         try await withCancellableCheckedThrowingContinuation() { [weak self] (continuation: CheckedContinuation<Void, Error>, cancellation: Cancellation) -> Void in
             self?.withTransaction { barrier in
-                if !barrier.enabled { continuation.resume(throwing: BarrierError.disabledBarrier) }
+                guard barrier.enabled else {
+                    continuation.resume(throwing: BarrierError.disabledBarrier)
+                    return
+                }
                 barrier.enqueueContinuationUnsafe(continuation)
                 barrier.resolveContinuationsUnsafe()
                 cancellation.onCancel = { [weak barrier] in
