@@ -20,6 +20,8 @@ public protocol Drain<Input, Output>: Sendable where Input: Sendable, Output: Se
     
     var isSealed: Bool { get }
     
+    func discardProducer(producerId: UInt64)
+    
     @discardableResult
     func send(producerId: UInt64, _ provider: @escaping () async throws -> Input) async throws -> Output
     
@@ -66,6 +68,10 @@ public final class ConfinedDrain<Input, Output>: Drain, Sendable where Input: Se
         gate.isSealed
     }
     
+    public func discardProducer(producerId: UInt64) {
+        gate.discardProducer(producerId: producerId)
+    }
+    
     @discardableResult
     public func send(producerId: UInt64, _ provider: @escaping () async throws -> Input) async throws -> Output {
         try await gate.send(producerId: producerId, provider)
@@ -83,6 +89,8 @@ public protocol Source<Input, Output>: Sendable where Input: Sendable, Output: S
     associatedtype Output
     
     var isSealed: Bool { get }
+    
+    func discardConsumer(consumerId: UInt64)
     
     @discardableResult
     func process(consumerId: UInt64, spec: any Spec<Input>, operation: (Input) async throws -> Output) async throws -> Output
@@ -168,6 +176,10 @@ public final class ConfinedSource<Input, Output>: Source, Sendable where Input: 
     
     public var isSealed: Bool {
         gate.isSealed
+    }
+    
+    public func discardConsumer(consumerId: UInt64) {
+        gate.discardConsumer(consumerId: consumerId)
     }
     
     @discardableResult
